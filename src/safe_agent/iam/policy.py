@@ -73,7 +73,9 @@ class PolicyStore:
             RuntimeError: If the store has been frozen via :meth:`freeze`.
         """
         if self._frozen:
-            raise RuntimeError("PolicyStore is frozen; no further policies may be added.")
+            raise RuntimeError(
+                "PolicyStore is frozen; no further policies may be added."
+            )
         if policy.version not in VALID_VERSIONS:
             raise ValueError(
                 f"Unrecognised policy version {policy.version!r}. "

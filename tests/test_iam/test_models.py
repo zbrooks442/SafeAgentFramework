@@ -13,6 +13,7 @@ from safe_agent.iam.models import (
 
 
 def make_allow_statement(**kwargs):
+    """Build a minimal Allow statement dict with optional overrides."""
     defaults = {
         "Effect": "Allow",
         "Action": ["agent:*"],
@@ -23,6 +24,8 @@ def make_allow_statement(**kwargs):
 
 
 class TestDecision:
+    """Tests for the Decision enum."""
+
     def test_values(self):
         assert Decision.ALLOWED == "ALLOWED"
         assert Decision.DENIED_EXPLICIT == "DENIED_EXPLICIT"
@@ -30,8 +33,14 @@ class TestDecision:
 
 
 class TestStatement:
+    """Tests for the Statement model."""
+
     def test_basic_allow(self):
-        data = {"Effect": "Allow", "Action": ["agent:RunTool"], "Resource": ["arn:tool:bash"]}
+        data = {
+            "Effect": "Allow",
+            "Action": ["agent:RunTool"],
+            "Resource": ["arn:tool:bash"],
+        }
         stmt = Statement.model_validate(data)
         assert stmt.effect == "Allow"
         assert stmt.action == ["agent:RunTool"]
@@ -45,7 +54,12 @@ class TestStatement:
         assert stmt.effect == "Deny"
 
     def test_with_sid(self):
-        data = {"Sid": "MyRule", "Effect": "Allow", "Action": ["*"], "Resource": ["*"]}
+        data = {
+            "Sid": "MyRule",
+            "Effect": "Allow",
+            "Action": ["*"],
+            "Resource": ["*"],
+        }
         stmt = Statement.model_validate(data)
         assert stmt.sid == "MyRule"
 
@@ -71,6 +85,8 @@ class TestStatement:
 
 
 class TestPolicy:
+    """Tests for the Policy model."""
+
     def test_basic_policy(self):
         data = {
             "Version": "2025-01",
@@ -100,6 +116,8 @@ class TestPolicy:
 
 
 class TestAuthorizationRequest:
+    """Tests for the AuthorizationRequest model."""
+
     def test_basic(self):
         req = AuthorizationRequest(action="agent:RunTool", resource="arn:tool:bash")
         assert req.action == "agent:RunTool"
@@ -116,6 +134,8 @@ class TestAuthorizationRequest:
 
 
 class TestAuthorizationResult:
+    """Tests for the AuthorizationResult model."""
+
     def test_basic(self):
         result = AuthorizationResult(decision=Decision.ALLOWED, reason="Test")
         assert result.decision == Decision.ALLOWED

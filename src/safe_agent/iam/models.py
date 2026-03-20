@@ -7,18 +7,18 @@ via Pydantic field aliases.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class Decision(str, Enum):
+class Decision(StrEnum):
     """The outcome of an authorization evaluation.
 
     Attributes:
         ALLOWED: The request was explicitly allowed by a matching Allow statement.
-        DENIED_EXPLICIT: The request was explicitly denied by a matching Deny statement.
+        DENIED_EXPLICIT: The request was explicitly denied by a Deny statement.
         DENIED_IMPLICIT: No matching Allow statement was found; default deny applies.
     """
 

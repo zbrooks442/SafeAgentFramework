@@ -15,11 +15,11 @@ from safe_agent.iam.models import (
 from safe_agent.iam.policy import PolicyStore
 
 __all__ = [
-    "PolicyEvaluator",
-    "PolicyStore",
-    "Policy",
-    "Statement",
     "AuthorizationRequest",
     "AuthorizationResult",
     "Decision",
+    "Policy",
+    "PolicyEvaluator",
+    "PolicyStore",
+    "Statement",
 ]

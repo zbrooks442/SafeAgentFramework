@@ -1,13 +1,11 @@
 """Tests for PolicyStore."""
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
-from safe_agent.iam.models import Policy, Statement
+from safe_agent.iam.models import Policy
 from safe_agent.iam.policy import PolicyStore
 
 VALID_POLICY = {
@@ -19,12 +17,15 @@ VALID_POLICY = {
 
 
 def write_json(directory: Path, filename: str, data: dict) -> Path:
+    """Write a JSON file into *directory* and return its path."""
     p = directory / filename
     p.write_text(json.dumps(data))
     return p
 
 
 class TestPolicyStoreLoad:
+    """Tests for PolicyStore.load()."""
+
     def test_load_single_file(self, tmp_path):
         write_json(tmp_path, "policy1.json", VALID_POLICY)
         store = PolicyStore()
@@ -41,7 +42,11 @@ class TestPolicyStoreLoad:
             {
                 "Version": "2025-01",
                 "Statement": [
-                    {"Effect": "Deny", "Action": ["agent:Delete"], "Resource": ["*"]},
+                    {
+                        "Effect": "Deny",
+                        "Action": ["agent:Delete"],
+                        "Resource": ["*"],
+                    },
                 ],
             },
         )
@@ -88,6 +93,8 @@ class TestPolicyStoreLoad:
 
 
 class TestPolicyStoreAddPolicy:
+    """Tests for PolicyStore.add_policy()."""
+
     def test_add_valid_policy(self):
         policy = Policy.model_validate(VALID_POLICY)
         store = PolicyStore()
@@ -97,7 +104,10 @@ class TestPolicyStoreAddPolicy:
     def test_add_invalid_version(self):
         # Policy model does not restrict version; PolicyStore.add_policy does
         policy = Policy.model_validate(
-            {"Version": "bad-ver", "Statement": [{"Effect": "Allow", "Action": ["*"], "Resource": ["*"]}]}
+            {
+                "Version": "bad-ver",
+                "Statement": [{"Effect": "Allow", "Action": ["*"], "Resource": ["*"]}],
+            }
         )
         store = PolicyStore()
         with pytest.raises(ValueError, match="Unrecognised policy version"):
@@ -112,6 +122,8 @@ class TestPolicyStoreAddPolicy:
 
 
 class TestPolicyStoreFreeze:
+    """Tests for PolicyStore.freeze()."""
+
     def test_freeze_prevents_add(self):
         store = PolicyStore()
         store.freeze()
@@ -133,6 +145,8 @@ class TestPolicyStoreFreeze:
 
 
 class TestGetAllStatements:
+    """Tests for PolicyStore.get_all_statements()."""
+
     def test_empty_store(self):
         store = PolicyStore()
         assert store.get_all_statements() == []
@@ -144,7 +158,12 @@ class TestGetAllStatements:
             {
                 "Version": "2025-01",
                 "Statement": [
-                    {"Sid": "First", "Effect": "Allow", "Action": ["a:Read"], "Resource": ["*"]},
+                    {
+                        "Sid": "First",
+                        "Effect": "Allow",
+                        "Action": ["a:Read"],
+                        "Resource": ["*"],
+                    },
                 ],
             },
         )
@@ -154,7 +173,12 @@ class TestGetAllStatements:
             {
                 "Version": "2025-01",
                 "Statement": [
-                    {"Sid": "Second", "Effect": "Deny", "Action": ["a:Write"], "Resource": ["*"]},
+                    {
+                        "Sid": "Second",
+                        "Effect": "Deny",
+                        "Action": ["a:Write"],
+                        "Resource": ["*"],
+                    },
                 ],
             },
         )

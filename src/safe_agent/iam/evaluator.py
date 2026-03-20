@@ -100,8 +100,10 @@ def _evaluate_condition_block(
     A missing context key causes the entire condition to fail (return ``False``).
 
     Args:
-        condition: The ``Condition`` dict from a :class:`~safe_agent.iam.models.Statement`.
-        context: The ``context`` dict from the :class:`~safe_agent.iam.models.AuthorizationRequest`.
+        condition: The ``Condition`` dict from a
+            :class:`~safe_agent.iam.models.Statement`.
+        context: The ``context`` dict from the
+            :class:`~safe_agent.iam.models.AuthorizationRequest`.
 
     Returns:
         ``True`` if all condition clauses are satisfied, ``False`` otherwise.
