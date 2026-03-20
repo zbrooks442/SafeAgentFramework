@@ -1,0 +1,34 @@
+name: Claude AI Review
+
+on:
+  pull_request_target:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.sender.login != 'zb02930139' &&
+      (github.event_name != 'pull_request_target' || github.event.label.name == 'run-ai-review') &&
+      (
+        (github.event_name == 'issue_comment' &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+        ||
+        (github.event_name == 'pull_request_target' &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))
+      )
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Claude Code Action
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.BOT_GITHUB_TOKEN }}
