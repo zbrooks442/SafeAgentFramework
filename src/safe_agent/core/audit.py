@@ -171,16 +171,26 @@ class AuditLogger:
         if not self._log_path.exists():
             return
 
-        # Read all lines eagerly — file is closed before any yielding.
-        with self._log_path.open(encoding="utf-8") as fh:
-            raw_lines = fh.readlines()
+        # Read all lines eagerly under the lock so we don't race with a
+        # concurrent write that is mid-append. The file is closed (and the
+        # lock released) before any yielding begins.
+        with self._lock:
+            with self._log_path.open(encoding="utf-8") as fh:
+                raw_lines = fh.readlines()
 
         count = 0
         for raw in raw_lines:
             line = raw.strip()
             if not line:
                 continue
-            yield AuditEntry(**json.loads(line))
+            try:
+                yield AuditEntry(**json.loads(line))
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "audit: skipping unparseable log line: %.120r", line
+                )
+                continue
             count += 1
             if limit is not None and count >= limit:
                 return

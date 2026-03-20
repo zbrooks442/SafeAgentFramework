@@ -221,6 +221,9 @@ class ToolDispatcher:
             )
 
             if eval_result.decision != Decision.ALLOWED:
+                # Intentional: no break here. We continue evaluating remaining
+                # resources so every decision is audited, giving a complete
+                # picture of what was denied and why.
                 denied = True
 
         # Step 6/7 — deny if any resource was denied, with no policy details.
