@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -12,6 +13,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from safe_agent.iam.models import Decision
+
+logger = logging.getLogger(__name__)
 
 # Maximum serialised byte length for params/resolved_conditions stored in an
 # audit entry. Values exceeding this limit are replaced with a truncation
@@ -47,7 +50,8 @@ class AuditEntry(BaseModel):
 
     Attributes:
         session_id: Identifier for the session that triggered the tool call.
-        timestamp: ISO-8601 UTC timestamp of the decision.
+        timestamp: ISO-8601 UTC timestamp of the decision. Must be a valid
+            ISO-8601 string (validated at construction time).
         tool_name: The fully-qualified tool name that was evaluated.
         params: Input parameters for the tool call, capped at
             ``_MAX_PARAM_BYTES`` (8 KB). Values exceeding the cap are replaced
@@ -59,6 +63,9 @@ class AuditEntry(BaseModel):
         decision: The authorization decision.
         matched_statements: Sids of policy statements that contributed to the
             decision. ``None`` entries represent anonymous (no-sid) statements.
+            The sentinel values ``"__unknown_tool__"``, ``"__internal_error__"``,
+            ``"__execute_error__"``, and ``"__executed__"`` are used by the
+            dispatcher for machine-readable event classification.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -70,6 +77,19 @@ class AuditEntry(BaseModel):
     resolved_conditions: dict[str, Any] = Field(default_factory=dict)
     decision: Decision
     matched_statements: list[str | None] = Field(default_factory=list)
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def _validate_timestamp(cls, v: Any) -> Any:
+        """Reject timestamps that are not valid ISO-8601 strings."""
+        if isinstance(v, str):
+            try:
+                datetime.fromisoformat(v)
+            except ValueError as exc:
+                raise ValueError(
+                    f"timestamp must be a valid ISO-8601 string, got: {v!r}"
+                ) from exc
+        return v
 
     @field_validator("params", "resolved_conditions", mode="before")
     @classmethod
@@ -83,16 +103,21 @@ class AuditEntry(BaseModel):
 class AuditLogger:
     """Appends structured :class:`AuditEntry` records as JSON lines to a file.
 
-    Thread-safe: a :class:`threading.Lock` serialises concurrent writes so
-    that log lines are never interleaved under async or threaded dispatch.
+    **Write path** — :meth:`log` is fully thread-safe: a :class:`threading.Lock`
+    serialises concurrent appends so that log lines are never interleaved.
 
-    Each call to :meth:`log` serialises the entry and appends a single
-    newline-delimited JSON record to the configured log file.
+    **Read path** — :meth:`iter_entries` and :meth:`read_entries` intentionally
+    do **not** hold the write lock while reading the file. Because :meth:`log`
+    only ever appends (never seeks or truncates), a concurrent read at worst
+    observes a partial final line, which the malformed-line skip path handles
+    gracefully. Holding the write lock during a potentially large file read
+    would stall every concurrent dispatch call — unacceptable for the
+    enforcement gate.
 
-    :meth:`read_entries` and :meth:`iter_entries` buffer the entire file into
-    memory before returning to avoid holding a read file descriptor open across
-    generator yields, which would create lock contention with the write path
-    under concurrent dispatch.
+    **Multi-process safety** — ``threading.Lock`` only serialises threads
+    within the same process. If multiple processes write to the same log file,
+    external file locking (e.g. ``fcntl.flock``) is required; this class does
+    not provide it.
 
     Args:
         log_path: Path to the JSON-lines audit log file.
@@ -127,8 +152,8 @@ class AuditLogger:
     def log(self, entry: AuditEntry) -> None:
         """Append *entry* as a JSON line to the audit log file.
 
-        Thread-safe. The lock ensures no two concurrent callers interleave
-        partial writes.
+        Thread-safe within a single process. The lock ensures no two concurrent
+        callers interleave partial writes.
 
         Args:
             entry: The :class:`AuditEntry` to persist.
@@ -141,9 +166,11 @@ class AuditLogger:
     def read_entries(self, limit: int | None = None) -> list[AuditEntry]:
         """Read and parse entries from the audit log.
 
-        The entire file is read and closed before any entries are returned,
-        so no file descriptor is held open across iteration. Safe to call
-        concurrently with :meth:`log`.
+        The file is read and closed before any entries are returned, so no file
+        descriptor is held open. Safe to call concurrently with :meth:`log`.
+
+        Note: the entire file is read into memory regardless of *limit*; for
+        very large audit files prefer :meth:`iter_entries` with a limit.
 
         Args:
             limit: If provided, return at most *limit* entries from the start
@@ -158,36 +185,33 @@ class AuditLogger:
     def iter_entries(self, limit: int | None = None) -> Iterator[AuditEntry]:
         """Iterate over entries from the audit log.
 
-        The file is read fully into memory before yielding begins, so the file
-        descriptor is not held open across ``yield`` points. This avoids lock
-        contention with the write path under concurrent dispatch.
+        The file is read fully into a string before parsing begins, so no file
+        descriptor is held open across ``yield`` points.
+
+        The write lock is intentionally **not** held during the read. See class
+        docstring for the rationale and trade-offs.
 
         Args:
             limit: Stop after yielding *limit* entries. ``None`` means all.
 
         Yields:
-            :class:`AuditEntry` objects in file order.
+            :class:`AuditEntry` objects in file order. Malformed lines are
+            skipped with a ``WARNING`` log and do not raise.
         """
-        if not self._log_path.exists():
+        try:
+            raw_content = self._log_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return
 
-        # Read all lines eagerly under the lock so we don't race with a
-        # concurrent write that is mid-append. The file is closed (and the
-        # lock released) before any yielding begins.
-        with self._lock:
-            with self._log_path.open(encoding="utf-8") as fh:
-                raw_lines = fh.readlines()
-
         count = 0
-        for raw in raw_lines:
+        for raw in raw_content.splitlines():
             line = raw.strip()
             if not line:
                 continue
             try:
                 yield AuditEntry(**json.loads(line))
             except Exception:
-                import logging as _logging
-                _logging.getLogger(__name__).warning(
+                logger.warning(
                     "audit: skipping unparseable log line: %.120r", line
                 )
                 continue

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
+
+import pytest
 
 from safe_agent.core.audit import AuditEntry, AuditLogger
 from safe_agent.iam.models import Decision
@@ -63,6 +66,16 @@ class TestAuditEntry:
         """matched_statements may contain None for anonymous statements."""
         entry = _make_entry(matched_statements=[None, "SomePolicy"])
         assert entry.matched_statements == [None, "SomePolicy"]
+
+    def test_invalid_timestamp_raises(self) -> None:
+        """AuditEntry should reject timestamps that are not valid ISO-8601."""
+        with pytest.raises(Exception, match="ISO-8601"):
+            _make_entry(timestamp="not-a-timestamp")
+
+    def test_valid_timestamp_accepted(self) -> None:
+        """AuditEntry should accept well-formed ISO-8601 timestamps."""
+        entry = _make_entry(timestamp="2026-06-01T12:00:00+00:00")
+        assert entry.timestamp == "2026-06-01T12:00:00+00:00"
 
 
 class TestAuditLogger:
@@ -147,7 +160,66 @@ class TestAuditLogger:
         assert len(logger.read_entries(limit=10)) == 5
 
     def test_now_iso_returns_utc_string(self) -> None:
-        """now_iso() should return a non-empty ISO-8601 string."""
+        """now_iso() should return a valid ISO-8601 UTC string."""
+        from datetime import datetime, timedelta
+
         ts = AuditLogger.now_iso()
         assert isinstance(ts, str)
-        assert "+00:00" in ts or "Z" in ts or "UTC" in ts
+        # Must parse as a valid ISO-8601 datetime
+        parsed = datetime.fromisoformat(ts)
+        # Must be UTC (offset zero)
+        assert parsed.utcoffset() is not None
+        assert parsed.utcoffset() == timedelta(0)
+
+    def test_iter_entries_skips_malformed_lines(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """iter_entries() should skip malformed lines and emit a warning."""
+        import logging
+
+        log_file = tmp_path / "audit.jsonl"
+        logger_inst = AuditLogger(log_path=log_file)
+        # Write one good entry, one bad line, one good entry
+        logger_inst.log(_make_entry(decision=Decision.ALLOWED))
+        log_file.open("a").write("NOT JSON AT ALL\n")
+        logger_inst.log(_make_entry(decision=Decision.DENIED_EXPLICIT))
+
+        with caplog.at_level(logging.WARNING, logger="safe_agent.core.audit"):
+            entries = logger_inst.read_entries()
+
+        assert len(entries) == 2
+        assert entries[0].decision == Decision.ALLOWED
+        assert entries[1].decision == Decision.DENIED_EXPLICIT
+        assert any("skipping unparseable" in r.message for r in caplog.records)
+
+    def test_concurrent_writes_no_interleaving(self, tmp_path: Path) -> None:
+        """Concurrent log() calls from multiple threads must not interleave lines."""
+        log_file = tmp_path / "audit.jsonl"
+        logger_inst = AuditLogger(log_path=log_file)
+        n_threads = 20
+        n_per_thread = 50
+
+        def write_entries(thread_id: int) -> None:
+            for i in range(n_per_thread):
+                logger_inst.log(
+                    _make_entry(
+                        session_id=f"thread-{thread_id}",
+                        tool_name=f"tool:{thread_id}:{i}",
+                    )
+                )
+
+        threads = [
+            threading.Thread(target=write_entries, args=(i,))
+            for i in range(n_threads)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        entries = logger_inst.read_entries()
+        assert len(entries) == n_threads * n_per_thread
+        # Every line must be valid JSON (no interleaving partial writes)
+        raw_lines = log_file.read_text().strip().splitlines()
+        for line in raw_lines:
+            json.loads(line)  # raises on corruption

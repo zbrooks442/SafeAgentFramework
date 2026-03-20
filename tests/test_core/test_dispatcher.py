@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -205,13 +206,18 @@ class TestToolDispatcher:
         assert result.success is False
 
     async def test_audit_logged_for_allowed(self, tmp_path: Path) -> None:
+        """Allowed dispatch writes a policy decision entry and an __executed__ entry."""
         module = _make_module("fs", "fs:Read", "filesystem:Read", ["path"])
         dispatcher = _make_dispatcher(module, _ALLOW_ALL, tmp_path)
         await dispatcher.dispatch("fs:Read", {"path": "/etc/hosts"}, "sess-42")
         entries = _audit(tmp_path).read_entries()
-        assert len(entries) == 1
-        assert entries[0].session_id == "sess-42"
-        assert entries[0].decision == Decision.ALLOWED
+        # 1 policy decision entry + 1 execution-occurred entry
+        assert len(entries) == 2
+        decision_entry = entries[0]
+        executed_entry = entries[1]
+        assert decision_entry.session_id == "sess-42"
+        assert decision_entry.decision == Decision.ALLOWED
+        assert executed_entry.matched_statements == ["__executed__"]
 
     async def test_audit_logged_for_denied(self, tmp_path: Path) -> None:
         module = _make_module("fs", "fs:Read", "filesystem:Read", ["path"])
@@ -232,11 +238,14 @@ class TestToolDispatcher:
         assert entries[0].matched_statements == ["__unknown_tool__"]
 
     async def test_audit_per_resource(self, tmp_path: Path) -> None:
+        """Each resource gets its own decision entry, plus one __executed__."""
         module = _make_module("fs", "fs:Copy", "filesystem:Copy", ["src", "dst"])
         dispatcher = _make_dispatcher(module, _ALLOW_ALL, tmp_path)
         await dispatcher.dispatch("fs:Copy", {"src": "/a", "dst": "/b"}, "s1")
         entries = _audit(tmp_path).read_entries()
-        assert len(entries) == 2
+        # 2 resource decision entries + 1 execution entry
+        assert len(entries) == 3
+        assert entries[2].matched_statements == ["__executed__"]
 
     async def test_no_resource_param_uses_empty_resource(self, tmp_path: Path) -> None:
         module = _make_module("sys", "sys:Ping", "system:Ping")
@@ -244,7 +253,8 @@ class TestToolDispatcher:
         result = await dispatcher.dispatch("sys:Ping", {}, "s1")
         assert result.success is True
         entries = _audit(tmp_path).read_entries()
-        assert len(entries) == 1
+        # 1 decision entry + 1 __executed__ entry
+        assert len(entries) == 2
 
     async def test_execute_not_called_when_denied(self, tmp_path: Path) -> None:
         execute_called = False
@@ -314,5 +324,56 @@ class TestToolDispatcher:
         big_params = {"data": "x" * (9 * 1024)}
         await dispatcher.dispatch("fs:Read", big_params, "s1")
         entries = _audit(tmp_path).read_entries()
+        # At least the decision entry should have truncated params
+        assert any(e.params == {"__truncated__": True} for e in entries)
+
+    async def test_oversized_params_truncated_for_unknown_tool(
+        self, tmp_path: Path
+    ) -> None:
+        """Oversized params for unknown tool lookups should also be truncated."""
+        module = _make_module("fs", "fs:Read", "filesystem:Read")
+        dispatcher = _make_dispatcher(module, _ALLOW_ALL, tmp_path)
+        big_params = {"data": "x" * (9 * 1024)}
+        result = await dispatcher.dispatch("ghost:Op", big_params, "s1")
+        assert result.success is False
+        entries = _audit(tmp_path).read_entries()
         assert len(entries) == 1
         assert entries[0].params == {"__truncated__": True}
+
+    async def test_audit_failure_fails_closed(self, tmp_path: Path) -> None:
+        """If audit logging fails, dispatch must fail closed — tool must not execute."""
+        execute_called = False
+
+        class _TrackingModule(BaseModule):
+            def describe(self) -> ModuleDescriptor:
+                return ModuleDescriptor(
+                    namespace="t",
+                    description=".",
+                    tools=[ToolDescriptor(name="t:Op", description=".", action="t:Op")],
+                )
+
+            async def resolve_conditions(
+                self, tn: str, p: dict[str, Any]
+            ) -> dict[str, Any]:
+                return {}
+
+            async def execute(self, tn: str, p: dict[str, Any]) -> ToolResult:
+                nonlocal execute_called
+                execute_called = True
+                return ToolResult(success=True, data="should not reach")
+
+        registry = ModuleRegistry()
+        registry.register(_TrackingModule())
+        store = PolicyStore()
+        store.add_policy(_ALLOW_ALL)
+        audit_logger = AuditLogger(log_path=tmp_path / "audit.jsonl")
+
+        dispatcher = ToolDispatcher(registry, PolicyEvaluator(store), audit_logger)
+
+        # Make log() raise to simulate a write failure
+        with patch.object(audit_logger, "log", side_effect=OSError("disk full")):
+            result = await dispatcher.dispatch("t:Op", {}, "s1")
+
+        assert result.success is False
+        assert result.error == "Dispatch failed"
+        assert execute_called is False, "execute() must not be called when audit fails"

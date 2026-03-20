@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from safe_agent.core.audit import AuditEntry, AuditLogger
 from safe_agent.iam.evaluator import PolicyEvaluator
@@ -42,10 +43,14 @@ class ToolDispatcher:
     6. On any internal exception (``resolve_conditions``, ``evaluate``,
        ``execute``, or ``log``): log a ``DENIED_IMPLICIT`` entry and return a
        generic failure. Exceptions never propagate to the caller.
-    7. If **any** resource is denied → return the opaque ``"Dispatch failed"``
+    7. If audit logging fails at any point, dispatch **fails closed** — the
+       tool is not executed and ``"Dispatch failed"`` is returned. An audit gap
+       is a security event; execution without a record is not acceptable.
+    8. If **any** resource is denied → return the opaque ``"Dispatch failed"``
        error. No policy detail, resource name, or statement info is exposed.
-    8. If **all** resources are allowed → call ``module.execute()`` and return
-       the result.
+    9. If **all** resources are allowed → call ``module.execute()`` and return
+       the result. A ``Decision.ALLOWED`` audit entry with ``"__executed__"``
+       is written after successful execution.
 
     Args:
         registry: The :class:`~safe_agent.modules.registry.ModuleRegistry`
@@ -80,28 +85,46 @@ class ToolDispatcher:
         self._evaluator = evaluator
         self._audit_logger = audit_logger
 
-    def _log_safe(self, entry: AuditEntry) -> None:
-        """Append *entry* to the audit log, swallowing and recording any error."""
+    def _log_or_fail(self, entry: AuditEntry) -> bool:
+        """Append *entry* to the audit log.
+
+        Returns ``True`` on success, ``False`` if logging failed.
+
+        Unlike a "log-safe-and-swallow" helper, callers are expected to treat
+        a ``False`` return as a hard failure: dispatch must not proceed without
+        an audit record. Callers should return :data:`_DISPATCH_FAILED` when
+        this method returns ``False``.
+
+        Args:
+            entry: The :class:`AuditEntry` to persist.
+
+        Returns:
+            ``True`` if the entry was written successfully; ``False`` otherwise.
+        """
         try:
             self._audit_logger.log(entry)
+            return True
         except Exception:
             logger.exception(
                 "safe_agent.dispatcher: audit logging failed for tool '%s' "
-                "session '%s' — THIS IS A SECURITY EVENT",
+                "session '%s' — THIS IS A SECURITY EVENT; failing closed",
                 entry.tool_name,
                 entry.session_id,
             )
+            return False
 
     async def dispatch(
         self,
         tool_name: str,
-        params: dict,
+        params: dict[str, Any],
         session_id: str,
     ) -> ToolResult:
         """Authorise and execute a tool call.
 
         Every outcome — allowed, denied, unknown tool, or internal error —
-        produces an audit log entry. No dispatch path is silent.
+        produces an audit log entry. No dispatch path is silent. If audit
+        logging itself fails, dispatch **fails closed** — the tool is not
+        executed.
 
         Args:
             tool_name: Fully-qualified tool name (e.g. ``"fs:ReadFile"``).
@@ -125,7 +148,7 @@ class ToolDispatcher:
         # Step 1 — look up the tool; audit and reject if unknown.
         lookup = self._registry.get_tool(tool_name)
         if lookup is None:
-            self._log_safe(
+            self._log_or_fail(
                 AuditEntry(
                     session_id=session_id,
                     timestamp=timestamp,
@@ -136,6 +159,8 @@ class ToolDispatcher:
                     matched_statements=["__unknown_tool__"],
                 )
             )
+            # Return the same error regardless of whether audit succeeded —
+            # an unknown tool is always rejected.
             return ToolResult(success=False, error=_DISPATCH_FAILED)
 
         module, descriptor = lookup
@@ -152,7 +177,7 @@ class ToolDispatcher:
             resources = [""]
 
         # Step 3 — resolve runtime conditions.
-        resolved_conditions: dict = {}
+        resolved_conditions: dict[str, Any] = {}
         try:
             resolved_conditions = await module.resolve_conditions(tool_name, params)
         except Exception:
@@ -160,7 +185,7 @@ class ToolDispatcher:
                 "safe_agent.dispatcher: resolve_conditions raised for tool '%s'",
                 tool_name,
             )
-            self._log_safe(
+            self._log_or_fail(
                 AuditEntry(
                     session_id=session_id,
                     timestamp=timestamp,
@@ -174,6 +199,7 @@ class ToolDispatcher:
             return ToolResult(success=False, error=_DISPATCH_FAILED)
 
         # Steps 4 & 5 — evaluate each resource and log every decision.
+        # Fail closed: if audit logging fails for any entry, abort immediately.
         denied = False
         for resource in resources:
             try:
@@ -190,7 +216,7 @@ class ToolDispatcher:
                     tool_name,
                     resource,
                 )
-                self._log_safe(
+                self._log_or_fail(
                     AuditEntry(
                         session_id=session_id,
                         timestamp=timestamp,
@@ -206,7 +232,7 @@ class ToolDispatcher:
                 denied = True
                 break
 
-            self._log_safe(
+            logged = self._log_or_fail(
                 AuditEntry(
                     session_id=session_id,
                     timestamp=timestamp,
@@ -219,6 +245,9 @@ class ToolDispatcher:
                     ],
                 )
             )
+            if not logged:
+                # Audit failure: fail closed — do not execute without a record.
+                return ToolResult(success=False, error=_DISPATCH_FAILED)
 
             if eval_result.decision != Decision.ALLOWED:
                 # Intentional: no break here. We continue evaluating remaining
@@ -226,19 +255,19 @@ class ToolDispatcher:
                 # picture of what was denied and why.
                 denied = True
 
-        # Step 6/7 — deny if any resource was denied, with no policy details.
+        # Step 7/8 — deny if any resource was denied, with no policy details.
         if denied:
             return ToolResult(success=False, error=_DISPATCH_FAILED)
 
-        # Step 8 — all resources allowed; execute.
+        # Step 9 — all resources allowed; execute.
         try:
-            return await module.execute(tool_name, params)
+            result = await module.execute(tool_name, params)
         except Exception:
             logger.exception(
                 "safe_agent.dispatcher: module.execute raised for tool '%s'",
                 tool_name,
             )
-            self._log_safe(
+            self._log_or_fail(
                 AuditEntry(
                     session_id=session_id,
                     timestamp=timestamp,
@@ -250,3 +279,18 @@ class ToolDispatcher:
                 )
             )
             return ToolResult(success=False, error=_DISPATCH_FAILED)
+
+        # Write an execution-occurred audit entry so the log shows not just
+        # policy decisions but confirmed tool executions.
+        self._log_or_fail(
+            AuditEntry(
+                session_id=session_id,
+                timestamp=AuditLogger.now_iso(),
+                tool_name=tool_name,
+                params=params,
+                resolved_conditions=resolved_conditions,
+                decision=Decision.ALLOWED,
+                matched_statements=["__executed__"],
+            )
+        )
+        return result
