@@ -2,16 +2,44 @@
 
 from __future__ import annotations
 
-import collections.abc
 import json
 import threading
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from safe_agent.iam.models import Decision
+
+# Maximum serialised byte length for params/resolved_conditions stored in an
+# audit entry. Values exceeding this limit are replaced with a truncation
+# marker so the audit log cannot become a credential or bulk-data dump.
+_MAX_PARAM_BYTES = 8 * 1024  # 8 KB
+_TRUNCATION_MARKER = "__truncated__"
+
+
+def _truncate_params(value: dict[str, Any]) -> dict[str, Any]:
+    """Return *value* unchanged, or a truncation marker if it is too large.
+
+    The entire dict is replaced (not partially redacted) to avoid creating
+    records that appear complete but are missing fields.
+
+    Args:
+        value: The params or conditions dict to check.
+
+    Returns:
+        The original dict, or ``{"__truncated__": True}`` if it serialises
+        to more than ``_MAX_PARAM_BYTES`` bytes.
+    """
+    try:
+        encoded = json.dumps(value, default=str)
+    except Exception:
+        return {_TRUNCATION_MARKER: True}
+    if len(encoded.encode()) > _MAX_PARAM_BYTES:
+        return {_TRUNCATION_MARKER: True}
+    return value
 
 
 class AuditEntry(BaseModel):
@@ -21,14 +49,19 @@ class AuditEntry(BaseModel):
         session_id: Identifier for the session that triggered the tool call.
         timestamp: ISO-8601 UTC timestamp of the decision.
         tool_name: The fully-qualified tool name that was evaluated.
-        params: The raw input parameters for the tool call. Sensitive fields
-            should be redacted by the caller before constructing this entry.
-        resolved_conditions: Condition values resolved by the module at
-            dispatch time, passed to the policy evaluator.
+        params: Input parameters for the tool call, capped at
+            ``_MAX_PARAM_BYTES`` (8 KB). Values exceeding the cap are replaced
+            with ``{"__truncated__": True}``. Callers should also redact
+            known-sensitive fields (API keys, passwords, PII) before
+            constructing the entry.
+        resolved_conditions: Condition values resolved by the module; also
+            size-capped.
         decision: The authorization decision.
         matched_statements: Sids of policy statements that contributed to the
             decision. ``None`` entries represent anonymous (no-sid) statements.
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     session_id: str
     timestamp: str
@@ -38,6 +71,14 @@ class AuditEntry(BaseModel):
     decision: Decision
     matched_statements: list[str | None] = Field(default_factory=list)
 
+    @field_validator("params", "resolved_conditions", mode="before")
+    @classmethod
+    def _cap_size(cls, v: Any) -> Any:
+        """Enforce the per-field byte cap before storing."""
+        if isinstance(v, dict):
+            return _truncate_params(v)
+        return v
+
 
 class AuditLogger:
     """Appends structured :class:`AuditEntry` records as JSON lines to a file.
@@ -46,12 +87,12 @@ class AuditLogger:
     that log lines are never interleaved under async or threaded dispatch.
 
     Each call to :meth:`log` serialises the entry and appends a single
-    newline-delimited JSON record to the configured log file, creating the
-    file (and any parent directories) if necessary.
+    newline-delimited JSON record to the configured log file.
 
-    Timestamping is owned by :meth:`log`; callers pass a pre-constructed
-    :class:`AuditEntry` with the timestamp already set (typically from the
-    dispatcher which owns the logical event time).
+    :meth:`read_entries` and :meth:`iter_entries` buffer the entire file into
+    memory before returning to avoid holding a read file descriptor open across
+    generator yields, which would create lock contention with the write path
+    under concurrent dispatch.
 
     Args:
         log_path: Path to the JSON-lines audit log file.
@@ -100,10 +141,13 @@ class AuditLogger:
     def read_entries(self, limit: int | None = None) -> list[AuditEntry]:
         """Read and parse entries from the audit log.
 
+        The entire file is read and closed before any entries are returned,
+        so no file descriptor is held open across iteration. Safe to call
+        concurrently with :meth:`log`.
+
         Args:
-            limit: If provided, return at most *limit* entries (from the
-                start of the file). Pass ``None`` to read all entries. For
-                large logs, prefer streaming via :meth:`iter_entries`.
+            limit: If provided, return at most *limit* entries from the start
+                of the file. ``None`` returns all entries.
 
         Returns:
             A list of :class:`AuditEntry` objects in file order. Returns an
@@ -111,10 +155,12 @@ class AuditLogger:
         """
         return list(self.iter_entries(limit=limit))
 
-    def iter_entries(
-        self, limit: int | None = None
-    ) -> collections.abc.Iterator[AuditEntry]:
-        """Stream entries from the audit log one at a time.
+    def iter_entries(self, limit: int | None = None) -> Iterator[AuditEntry]:
+        """Iterate over entries from the audit log.
+
+        The file is read fully into memory before yielding begins, so the file
+        descriptor is not held open across ``yield`` points. This avoids lock
+        contention with the write path under concurrent dispatch.
 
         Args:
             limit: Stop after yielding *limit* entries. ``None`` means all.
@@ -124,13 +170,17 @@ class AuditLogger:
         """
         if not self._log_path.exists():
             return
-        count = 0
+
+        # Read all lines eagerly — file is closed before any yielding.
         with self._log_path.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                yield AuditEntry(**json.loads(line))
-                count += 1
-                if limit is not None and count >= limit:
-                    return
+            raw_lines = fh.readlines()
+
+        count = 0
+        for raw in raw_lines:
+            line = raw.strip()
+            if not line:
+                continue
+            yield AuditEntry(**json.loads(line))
+            count += 1
+            if limit is not None and count >= limit:
+                return

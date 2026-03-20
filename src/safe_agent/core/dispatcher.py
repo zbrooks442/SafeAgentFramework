@@ -12,9 +12,9 @@ from safe_agent.modules.registry import ModuleRegistry
 
 logger = logging.getLogger(__name__)
 
-# The single opaque error returned to callers on any dispatch failure.
-# Keeping "unknown tool" and "denied" identical prevents callers from using
-# the error string to probe which tool names exist in the registry.
+# Single opaque error string returned on any dispatch failure.
+# Identical for "unknown tool" and "denied" to prevent callers from using the
+# error message to probe which tool names exist in the registry.
 _DISPATCH_FAILED = "Dispatch failed"
 
 
@@ -25,25 +25,25 @@ class ToolDispatcher:
     ``execute()`` method, and it passes through policy evaluation for every
     affected resource. There is no bypass, no override flag, and no skip path.
 
-    Evaluation follows these steps:
+    Evaluation follows these steps for every ``dispatch()`` call:
 
     1. Look up the tool in the registry. Unknown tools are rejected *and*
-       audited immediately — probing the registry leaves a trace.
+       audited immediately — registry probing always leaves a trace.
     2. Extract resource(s) from ``params`` using ``descriptor.resource_param``.
-       If no resources are declared, evaluation proceeds against a single empty
-       resource string (``""``) — the policy must explicitly allow this case.
-       This contract is enforced here and documented so there is no ambiguity.
+       **Contract:** if ``resource_param`` is empty, evaluation proceeds against
+       a single empty-string resource (``""``). The policy must explicitly allow
+       ``resource=""`` for such tools — there is no implicit pass.
     3. Call ``module.resolve_conditions()`` to obtain runtime context values.
     4. For each resource: build an :class:`~safe_agent.iam.models.AuthorizationRequest`
        and call :meth:`~safe_agent.iam.evaluator.PolicyEvaluator.evaluate`.
-    5. Log every decision via the :class:`~safe_agent.core.audit.AuditLogger`.
-       Every decision — allowed, denied, unknown-tool, and internal errors —
-       produces an audit entry. There is no silent path.
-    6. On any internal error (exception from ``resolve_conditions``,
-       ``evaluate``, or ``log``): log a ``DENIED_IMPLICIT`` entry and return
-       a generic failure. Exceptions never propagate to the caller.
-    7. If **any** resource is denied → return a generic failure with no policy
-       detail, resource name, or matched statement exposed.
+    5. Log every decision via :class:`~safe_agent.core.audit.AuditLogger`.
+       Every outcome — allowed, denied, unknown-tool, internal error — produces
+       an audit entry. There is no silent dispatch path.
+    6. On any internal exception (``resolve_conditions``, ``evaluate``,
+       ``execute``, or ``log``): log a ``DENIED_IMPLICIT`` entry and return a
+       generic failure. Exceptions never propagate to the caller.
+    7. If **any** resource is denied → return the opaque ``"Dispatch failed"``
+       error. No policy detail, resource name, or statement info is exposed.
     8. If **all** resources are allowed → call ``module.execute()`` and return
        the result.
 
@@ -51,9 +51,9 @@ class ToolDispatcher:
         registry: The :class:`~safe_agent.modules.registry.ModuleRegistry`
             containing all registered modules.
         evaluator: The :class:`~safe_agent.iam.evaluator.PolicyEvaluator`
-            to use for authorisation decisions.
-        audit_logger: The :class:`~safe_agent.core.audit.AuditLogger` to
-            record all decisions to.
+            for authorisation decisions.
+        audit_logger: The :class:`~safe_agent.core.audit.AuditLogger` for
+            recording every decision.
 
     Example::
 
@@ -81,7 +81,7 @@ class ToolDispatcher:
         self._audit_logger = audit_logger
 
     def _log_safe(self, entry: AuditEntry) -> None:
-        """Log *entry*, swallowing and recording any logging error."""
+        """Append *entry* to the audit log, swallowing and recording any error."""
         try:
             self._audit_logger.log(entry)
         except Exception:
@@ -104,16 +104,18 @@ class ToolDispatcher:
         produces an audit log entry. No dispatch path is silent.
 
         Args:
-            tool_name: The fully-qualified tool name (e.g. ``"fs:ReadFile"``).
+            tool_name: Fully-qualified tool name (e.g. ``"fs:ReadFile"``).
             params: Raw input parameters for the tool.
             session_id: Non-empty identifier for the calling session, used in
                 audit logs.
 
         Returns:
             A :class:`~safe_agent.modules.base.ToolResult`. On any failure
-            (unknown tool, denial, or internal error) the error is the opaque
-            string ``"Dispatch failed"`` — no policy, resource, or internal
-            detail is exposed.
+            the error field is the opaque string ``"Dispatch failed"`` — no
+            policy, resource, or internal detail is exposed.
+
+        Raises:
+            ValueError: If *session_id* is empty.
         """
         if not session_id:
             raise ValueError("session_id must be a non-empty string")
@@ -139,8 +141,8 @@ class ToolDispatcher:
         module, descriptor = lookup
 
         # Step 2 — extract resources from params.
-        # Contract: if resource_param is empty, evaluate against "" (the policy
-        # must explicitly allow resource="" for such tools).
+        # Contract: if resource_param is empty, evaluate against "" — the
+        # policy must explicitly allow resource="" for no-resource tools.
         resources: list[str] = []
         for param_name in descriptor.resource_param:
             value = params.get(param_name)
@@ -149,7 +151,8 @@ class ToolDispatcher:
         if not resources:
             resources = [""]
 
-        # Step 3 — resolve runtime conditions from the module.
+        # Step 3 — resolve runtime conditions.
+        resolved_conditions: dict = {}
         try:
             resolved_conditions = await module.resolve_conditions(tool_name, params)
         except Exception:
@@ -179,7 +182,7 @@ class ToolDispatcher:
                     resource=resource,
                     context=resolved_conditions,
                 )
-                result = self._evaluator.evaluate(request)
+                eval_result = self._evaluator.evaluate(request)
             except Exception:
                 logger.exception(
                     "safe_agent.dispatcher: evaluator raised for tool '%s' "
@@ -198,8 +201,10 @@ class ToolDispatcher:
                         matched_statements=["__internal_error__"],
                     )
                 )
+                # Stop on first evaluator error — avoids flooding the audit log
+                # with repeated __internal_error__ entries for the same fault.
                 denied = True
-                continue
+                break
 
             self._log_safe(
                 AuditEntry(
@@ -208,12 +213,14 @@ class ToolDispatcher:
                     tool_name=tool_name,
                     params=params,
                     resolved_conditions=resolved_conditions,
-                    decision=result.decision,
-                    matched_statements=[stmt.sid for stmt in result.matched_statements],
+                    decision=eval_result.decision,
+                    matched_statements=[
+                        stmt.sid for stmt in eval_result.matched_statements
+                    ],
                 )
             )
 
-            if result.decision != Decision.ALLOWED:
+            if eval_result.decision != Decision.ALLOWED:
                 denied = True
 
         # Step 6/7 — deny if any resource was denied, with no policy details.
