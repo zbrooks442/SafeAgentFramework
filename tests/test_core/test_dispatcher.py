@@ -373,3 +373,30 @@ class TestToolDispatcher:
 
         assert result.success is False
         assert result.error == "Dispatch failed"
+
+    async def test_log_safe_failure_is_fail_closed_on_policy_decision(
+        self, tmp_path: Path
+    ) -> None:
+        """Audit failure on the policy-decision path must deny execution."""
+        module = _make_module("fs", "fs:Read", "filesystem:Read", ["path"])
+        dispatcher = _make_dispatcher(module, _ALLOW_ALL, tmp_path)
+
+        original_log = dispatcher._audit_logger.log
+        call_count = 0
+
+        def fail_on_first_log(*args: Any, **kwargs: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise OSError("disk full")
+            original_log(*args, **kwargs)
+
+        with patch.object(
+            dispatcher._audit_logger, "log", side_effect=fail_on_first_log
+        ):
+            result = await dispatcher.dispatch("fs:Read", {"path": "/etc/hosts"}, "s1")
+
+        assert result.success is False
+        assert result.error == "Dispatch failed"
+        assert call_count == 1
+        assert _audit(tmp_path).read_entries() == []

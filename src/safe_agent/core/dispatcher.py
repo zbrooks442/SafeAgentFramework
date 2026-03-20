@@ -238,7 +238,7 @@ class ToolDispatcher:
                 denied = True
                 break
 
-            self._log_safe(
+            logged = self._log_safe(
                 AuditEntry(
                     session_id=session_id,
                     timestamp=timestamp,
@@ -251,6 +251,19 @@ class ToolDispatcher:
                     ],
                 )
             )
+            if not logged:
+                # Audit write failed for this resource's policy decision.
+                # Fail closed — we cannot execute without a record.
+                logger.error(
+                    "safe_agent.dispatcher: audit write failed for policy "
+                    "decision on tool '%s' resource '%s' session '%s' — "
+                    "denying (fail-closed) — THIS IS A SECURITY EVENT",
+                    tool_name,
+                    resource,
+                    session_id,
+                )
+                denied = True
+                break
 
             if eval_result.decision != Decision.ALLOWED:
                 # Intentional: no break here. We continue evaluating remaining
