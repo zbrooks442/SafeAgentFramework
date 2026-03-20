@@ -2,6 +2,7 @@
 
 import logging
 from importlib.metadata import entry_points
+from typing import Any
 
 from safe_agent.modules.base import BaseModule, ToolDescriptor, ToolResult
 
@@ -54,6 +55,13 @@ class ModuleRegistry:
             ValueError: If the module's namespace is already registered by a
                 different module instance, or if any of the module's tool names
                 collide with an already-registered tool.
+
+        Note:
+            ``register()`` is atomic with respect to its own state mutations:
+            all validation is performed before any writes, so a ``ValueError``
+            leaves the registry unchanged. However, if ``describe()`` itself
+            raises, the registry is unaffected. Callers should discard the
+            registry after any unexpected exception to be safe.
         """
         descriptor = module.describe()
         namespace = descriptor.namespace
@@ -69,7 +77,8 @@ class ModuleRegistry:
             # Same module registered twice — idempotent, just return.
             return
 
-        # Tool name collision check — must happen before any mutations.
+        # Pre-validate tool name uniqueness before touching any state.
+        # This makes register() atomic: either all tools are committed or none.
         for tool in descriptor.tools:
             if tool.name in self._tool_map:
                 existing_module, _ = self._tool_map[tool.name]
@@ -79,6 +88,7 @@ class ModuleRegistry:
                     f"Tool names must be unique across all modules."
                 )
 
+        # All validation passed — commit namespace and tools together.
         self._namespace_map[namespace] = module
         for tool in descriptor.tools:
             self._tool_map[tool.name] = (module, tool)
@@ -193,7 +203,7 @@ class ModuleRegistry:
     async def dispatch(
         self,
         tool_name: str,
-        params: dict,
+        params: dict[str, Any],
     ) -> ToolResult:
         """Look up and execute a tool by name, validating it exists first.
 
