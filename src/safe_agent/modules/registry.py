@@ -65,6 +65,9 @@ class ModuleRegistry:
         """
         descriptor = module.describe()
         namespace = descriptor.namespace
+        # Snapshot tools once so both validation and write passes use the same
+        # list, guarding against mutation between the two iterations.
+        tools = list(descriptor.tools)
 
         # Namespace collision check.
         if namespace in self._namespace_map:
@@ -79,7 +82,7 @@ class ModuleRegistry:
 
         # Pre-validate tool name uniqueness before touching any state.
         # This makes register() atomic: either all tools are committed or none.
-        for tool in descriptor.tools:
+        for tool in tools:
             if tool.name in self._tool_map:
                 existing_module, _ = self._tool_map[tool.name]
                 raise ValueError(
@@ -90,7 +93,7 @@ class ModuleRegistry:
 
         # All validation passed — commit namespace and tools together.
         self._namespace_map[namespace] = module
-        for tool in descriptor.tools:
+        for tool in tools:
             self._tool_map[tool.name] = (module, tool)
 
     def discover(self) -> None:
@@ -117,6 +120,13 @@ class ModuleRegistry:
                 of ``BaseModule``.
             ValueError: If namespace or tool name collisions occur during
                 registration.
+
+        Warning:
+            If ``discover()`` raises mid-loop, any entry points processed
+            before the failure are already registered and the registry state
+            is partially populated. Discard the registry and create a new
+            instance rather than retrying discovery on a failed registry.
+            See issue #11 for atomic discovery support.
         """
         if self._discovered:
             raise RuntimeError(
@@ -219,10 +229,10 @@ class ModuleRegistry:
             A ``ToolResult`` from the module's ``execute()`` method.
 
         Raises:
-            KeyError: If ``tool_name`` is not registered in this registry.
+            ValueError: If ``tool_name`` is not registered in this registry.
         """
         result = self.get_tool(tool_name)
         if result is None:
-            raise KeyError(f"Tool '{tool_name}' is not registered in this registry.")
+            raise ValueError(f"Tool '{tool_name}' is not registered in this registry.")
         module, _descriptor = result
         return await module.execute(tool_name, params)

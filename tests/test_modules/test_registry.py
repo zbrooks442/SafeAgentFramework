@@ -288,7 +288,7 @@ class TestModuleRegistry:
         assert result.success is True
 
     async def test_dispatch_raises_for_unknown_tool(self) -> None:
-        """dispatch() should raise KeyError for an unregistered tool name."""
+        """dispatch() should raise ValueError for an unregistered tool name."""
         registry = ModuleRegistry()
-        with pytest.raises(KeyError, match="not registered"):
+        with pytest.raises(ValueError, match="not registered"):
             await registry.dispatch("ghost:Op", {})
