@@ -1,0 +1,147 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safe-agent"
+version = "0.1.0"
+description = "A security-first agentic AI framework with IAM-style policy controls"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.13"
+authors = [
+    {name = "Zach Brooks"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.0",
+    "chromadb>=0.5.0",
+    "tiktoken>=0.7.0",
+    "httpx>=0.27.0",
+    "aiofiles>=24.1.0",
+    "gitpython>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.6.0",
+    "bandit>=1.7.0",
+    "mypy>=1.11.0",
+    "types-aiofiles>=24.1.0",
+]
+
+[project.urls]
+Repository = "https://github.com/zbrooks422/safeagentframework"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ---------------------------------------------------------------------------
+# Ruff (linting + formatting — replaces flake8, isort, black, and bandit's S)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "S",    # flake8-bandit (Bandit security rules)
+    "D",    # pydocstyle (docstring conventions)
+    "RUF",  # Ruff-specific rules
+]
+ignore = [
+    "D100",  # missing docstring in public module (too noisy during bootstrap)
+    "D104",  # missing docstring in public package
+    "D107",  # missing docstring in __init__ (class docstrings + Attributes suffice)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",  # allow assert in tests
+    "S108",  # allow /tmp paths in test data
+    "D102",  # don't require docstrings in test methods
+    "D103",  # don't require docstrings in test functions
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# ---------------------------------------------------------------------------
+# Black (configured for compatibility — ruff format is the primary formatter)
+# ---------------------------------------------------------------------------
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+
+# ---------------------------------------------------------------------------
+# Bandit (standalone security scanner — defense-in-depth alongside ruff S)
+# ---------------------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = []
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+strict_optional = true
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--strict-markers --tb=short -q"
+asyncio_mode = "auto"
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["safe_agent"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 0
