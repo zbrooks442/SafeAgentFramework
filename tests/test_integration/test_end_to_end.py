@@ -146,9 +146,7 @@ async def test_session_id_enables_multi_turn_conversation(tmp_path: Path) -> Non
     policy_dir = tmp_path / "policies"
     policy_dir.mkdir()
     write_policy(policy_dir, "allowed-resource")
-    llm = MockLLM(
-        [LLMResponse(content="turn one"), LLMResponse(content="turn two")]
-    )
+    llm = MockLLM([LLMResponse(content="turn one"), LLMResponse(content="turn two")])
     agent = Agent(
         policy_dir=policy_dir,
         llm_client=llm,
