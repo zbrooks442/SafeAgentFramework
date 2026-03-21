@@ -159,6 +159,23 @@ class TestFilesystemModule:
             "filesystem:IsDirectory": "false",
         }
 
+    async def test_move_file_conditions_use_destination_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """move_file conditions should reflect the destination resource."""
+        module = FilesystemModule(tmp_path)
+
+        conditions = await module.resolve_conditions(
+            "filesystem:move_file",
+            {"source": "notes.txt", "destination": "config.secret"},
+        )
+
+        assert conditions == {
+            "filesystem:FileExtension": ".secret",
+            "filesystem:IsDirectory": "false",
+        }
+
     async def test_resolve_conditions_for_directory(self, tmp_path: Path) -> None:
         """resolve_conditions should mark directories and omit file size."""
         module = FilesystemModule(tmp_path)
@@ -202,3 +219,35 @@ class TestFilesystemModule:
 
         assert result.success is False
         assert result.error == "Path is not a directory"
+
+    async def test_list_directory_rejects_parent_glob_pattern(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Glob patterns containing parent components should be rejected."""
+        module = FilesystemModule(tmp_path)
+        (tmp_path / "nested").mkdir()
+
+        result = await module.execute(
+            "filesystem:list_directory",
+            {"path": ".", "pattern": "../../etc/*"},
+        )
+
+        assert result.success is False
+        assert result.error == "Pattern must not contain '..' components"
+
+    async def test_move_file_rejects_existing_destination(self, tmp_path: Path) -> None:
+        """move_file should not silently overwrite an existing file."""
+        module = FilesystemModule(tmp_path)
+        (tmp_path / "source.txt").write_text("source", encoding="utf-8")
+        destination = tmp_path / "destination.txt"
+        destination.write_text("existing", encoding="utf-8")
+
+        result = await module.execute(
+            "filesystem:move_file",
+            {"source": "source.txt", "destination": "destination.txt"},
+        )
+
+        assert result.success is False
+        assert result.error == "Destination file already exists"
+        assert destination.read_text(encoding="utf-8") == "existing"

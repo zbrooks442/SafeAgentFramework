@@ -177,12 +177,12 @@ class FilesystemModule(BaseModule):
         """Select the path-like parameter used for condition resolution."""
         normalized_tool = tool_name.removeprefix("filesystem:")
         if normalized_tool == "move_file":
-            source = params.get("source")
             destination = params.get("destination")
-            if source is not None:
-                return str(source)
+            source = params.get("source")
             if destination is not None:
                 return str(destination)
+            if source is not None:
+                return str(source)
             return None
 
         path_value = params.get("path")
@@ -242,6 +242,11 @@ class FilesystemModule(BaseModule):
             return ToolResult(success=False, error="Directory not found")
         if not path.is_dir():
             return ToolResult(success=False, error="Path is not a directory")
+        if ".." in Path(pattern).parts:
+            return ToolResult(
+                success=False,
+                error="Pattern must not contain '..' components",
+            )
 
         iterator = path.rglob(pattern) if recursive else path.glob(pattern)
         entries: list[dict[str, str | bool]] = [
@@ -281,6 +286,11 @@ class FilesystemModule(BaseModule):
             return ToolResult(success=False, error="Source path is a directory")
         if destination.exists() and destination.is_dir():
             return ToolResult(success=False, error="Destination path is a directory")
+        if destination.exists():
+            return ToolResult(
+                success=False,
+                error="Destination file already exists",
+            )
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         source.rename(destination)
