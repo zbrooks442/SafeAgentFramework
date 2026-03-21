@@ -203,9 +203,7 @@ class AuditLogger:
             try:
                 yield AuditEntry(**json.loads(line))
             except Exception:
-                _logger.warning(
-                    "audit: skipping unparseable log line: %.120r", line
-                )
+                _logger.warning("audit: skipping unparseable log line: %.120r", line)
                 continue
             count += 1
             if limit is not None and count >= limit:

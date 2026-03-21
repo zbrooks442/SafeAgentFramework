@@ -155,9 +155,7 @@ class TestAuditLogger:
         # Python's datetime.isoformat() with tz=UTC always produces "+00:00"
         assert "+00:00" in ts
 
-    def test_iter_entries_skips_malformed_lines(
-        self, tmp_path: Path, caplog
-    ) -> None:
+    def test_iter_entries_skips_malformed_lines(self, tmp_path: Path, caplog) -> None:
         """iter_entries() should skip unparseable lines and log a warning."""
         import logging
 
@@ -198,9 +196,7 @@ class TestAuditLogger:
             except Exception as exc:
                 errors.append(exc)
 
-        threads = [
-            threading.Thread(target=_write, args=(i,)) for i in range(n_threads)
-        ]
+        threads = [threading.Thread(target=_write, args=(i,)) for i in range(n_threads)]
         for t in threads:
             t.start()
         for t in threads:

@@ -350,9 +350,7 @@ class TestToolDispatcher:
         dispatcher = _make_dispatcher(module, _ALLOW_ALL, tmp_path)
 
         disk_full = OSError("disk full")
-        with patch.object(
-            dispatcher._audit_logger, "log", side_effect=disk_full
-        ):
+        with patch.object(dispatcher._audit_logger, "log", side_effect=disk_full):
             result = await dispatcher.dispatch("ghost:Op", {}, "s1")
 
         assert result.success is False
@@ -366,9 +364,7 @@ class TestToolDispatcher:
         dispatcher = _make_dispatcher(module, _ALLOW_ALL, tmp_path)
 
         disk_full = OSError("disk full")
-        with patch.object(
-            dispatcher._audit_logger, "log", side_effect=disk_full
-        ):
+        with patch.object(dispatcher._audit_logger, "log", side_effect=disk_full):
             result = await dispatcher.dispatch("fs:Read", {}, "s1")
 
         assert result.success is False
