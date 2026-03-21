@@ -23,7 +23,11 @@ class ModuleRegistry:
       shadowing).
     - Registering the *same* instance twice is idempotent and a no-op.
 
-    ``discover()`` is call-once; subsequent calls raise ``RuntimeError``.
+    ``discover()`` may be retried after a failure. After a successful call,
+    subsequent calls raise ``RuntimeError``.
+
+    This class is not thread-safe. External synchronization is required for
+    concurrent access.
 
     Security note: ``discover()`` loads and instantiates code from installed
     packages that declare a ``safe_agent.modules`` entry point. This is only
@@ -144,64 +148,57 @@ class ModuleRegistry:
             self._tool_map
         )
 
-        try:
-            for ep in eps:
-                module_class = ep.load()
-                logger.info(
-                    "safe_agent.modules: loading entry point '%s' (%s)",
-                    ep.name,
-                    ep.value,
+        for ep in eps:
+            module_class = ep.load()
+            logger.info(
+                "safe_agent.modules: loading entry point '%s' (%s)",
+                ep.name,
+                ep.value,
+            )
+            if not (
+                isinstance(module_class, type) and issubclass(module_class, BaseModule)
+            ):
+                raise TypeError(
+                    f"Entry point '{ep.name}' ({ep.value}) loaded "
+                    f"{module_class!r}, which is not a subclass of "
+                    f"BaseModule. Only trusted BaseModule subclasses "
+                    f"may be registered."
                 )
-                if not (
-                    isinstance(module_class, type)
-                    and issubclass(module_class, BaseModule)
-                ):
-                    raise TypeError(
-                        f"Entry point '{ep.name}' ({ep.value}) loaded "
-                        f"{module_class!r}, which is not a subclass of "
-                        f"BaseModule. Only trusted BaseModule subclasses "
-                        f"may be registered."
+            instance: BaseModule = module_class()
+            descriptor = instance.describe()
+            namespace = descriptor.namespace
+            tools = list(descriptor.tools)
+
+            # Namespace collision check against staging state.
+            if namespace in staging_namespace_map:
+                existing = staging_namespace_map[namespace]
+                raise ValueError(
+                    f"Namespace collision: '{namespace}' is already "
+                    f"registered by {existing!r}."
+                )
+
+            # Tool collision check against staging state.
+            for tool in tools:
+                if tool.name in staging_tool_map:
+                    existing_module, _ = staging_tool_map[tool.name]
+                    raise ValueError(
+                        f"Tool name collision: '{tool.name}' is already "
+                        f"registered by {existing_module!r}. "
+                        f"Tool names must be unique across all modules."
                     )
-                instance: BaseModule = module_class()
-                descriptor = instance.describe()
-                namespace = descriptor.namespace
-                tools = list(descriptor.tools)
 
-                # Namespace collision check against staging state.
-                if namespace in staging_namespace_map:
-                    existing = staging_namespace_map[namespace]
-                    if existing is not instance:
-                        raise ValueError(
-                            f"Namespace collision: '{namespace}' is already "
-                            f"registered by {existing!r}."
-                        )
-                    # Same instance — idempotent, skip.
-                    continue
+            # All checks passed — write to staging only. If anything below
+            # raises, these local dicts are discarded and live state remains
+            # untouched.
+            staging_namespace_map[namespace] = instance
+            for tool in tools:
+                staging_tool_map[tool.name] = (instance, tool)
 
-                # Tool collision check against staging state.
-                for tool in tools:
-                    if tool.name in staging_tool_map:
-                        existing_module, _ = staging_tool_map[tool.name]
-                        raise ValueError(
-                            f"Tool name collision: '{tool.name}' is already "
-                            f"registered by {existing_module!r}. "
-                            f"Tool names must be unique across all modules."
-                        )
-
-                # All checks passed — write to staging only.
-                staging_namespace_map[namespace] = instance
-                for tool in tools:
-                    staging_tool_map[tool.name] = (instance, tool)
-
-                logger.info(
-                    "safe_agent.modules: registered '%s' from entry point '%s'",
-                    instance,
-                    ep.name,
-                )
-        except Exception:
-            # Discovery failed — staging dicts are discarded, live maps
-            # untouched. Do not mark as completed.
-            raise
+            logger.info(
+                "safe_agent.modules: registered '%s' from entry point '%s'",
+                instance,
+                ep.name,
+            )
 
         # All entry points processed successfully — atomic swap.
         self._namespace_map = staging_namespace_map
