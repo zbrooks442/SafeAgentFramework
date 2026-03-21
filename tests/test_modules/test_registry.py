@@ -380,6 +380,81 @@ class TestModuleRegistry:
         assert registry.get_tool("manual:Op") is not None
         assert registry._discovered is False
 
+    def test_discover_can_be_retried_after_failure(self) -> None:
+        """discover() should be retryable after a failed attempt.
+
+        A failure must leave ``_discovered`` false so a later clean retry can
+        succeed on the same registry instance.
+        """
+
+        class NotAModule:
+            """Not a module."""
+
+        bad_ep = MagicMock()
+        bad_ep.name = "bad_ep"
+        bad_ep.value = "pkg:Bad"
+        bad_ep.load.return_value = NotAModule
+
+        good_instance = _make_module("retry", ["retry:Op"])
+        GoodClass = type(good_instance)
+
+        good_ep = MagicMock()
+        good_ep.name = "good_ep"
+        good_ep.value = "pkg:RetryModule"
+        good_ep.load.return_value = GoodClass
+
+        registry = ModuleRegistry()
+        with patch(
+            "safe_agent.modules.registry.entry_points",
+            return_value=[bad_ep],
+        ):
+            with pytest.raises(TypeError):
+                registry.discover()
+
+        assert registry._discovered is False
+
+        with patch(
+            "safe_agent.modules.registry.entry_points",
+            return_value=[good_ep],
+        ):
+            registry.discover()
+
+        assert registry._discovered is True
+        assert registry.get_module("retry") is not None
+        assert registry.get_tool("retry:Op") is not None
+
+    def test_discover_rejects_namespace_collision_with_manual_registration(
+        self,
+    ) -> None:
+        """discover() should reject namespace collisions against live state.
+
+        Pre-existing manual registrations must be included in the staging copy,
+        and a colliding discovered module must fail without changing live state.
+        """
+        manual = _make_module("shared", ["shared:Manual"])
+        discovered = _make_module("shared", ["shared:Discovered"])
+        DiscoveredClass = type(discovered)
+
+        ep = MagicMock()
+        ep.name = "shared_ep"
+        ep.value = "pkg:SharedModule"
+        ep.load.return_value = DiscoveredClass
+
+        registry = ModuleRegistry()
+        registry.register(manual)
+
+        with patch(
+            "safe_agent.modules.registry.entry_points",
+            return_value=[ep],
+        ):
+            with pytest.raises(ValueError, match="Namespace collision"):
+                registry.discover()
+
+        assert registry.get_module("shared") is manual
+        assert registry.get_tool("shared:Manual") is not None
+        assert registry.get_tool("shared:Discovered") is None
+        assert registry._discovered is False
+
     # ---------------------------------------------------------------------------
     # dispatch() tests
     # ---------------------------------------------------------------------------
