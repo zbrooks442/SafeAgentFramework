@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from safe_agent.core.dispatcher import ToolDispatcher
 from safe_agent.core.llm import LLMClient
@@ -11,7 +12,11 @@ from safe_agent.modules.registry import ModuleRegistry
 
 
 class EventLoop:
-    """Coordinates LLM responses and tool execution for a session."""
+    """Coordinates LLM responses and tool execution for a session.
+
+    Callers should invoke :meth:`release_session` when a session is done so
+    per-session locks do not accumulate indefinitely.
+    """
 
     def __init__(
         self,
@@ -26,6 +31,10 @@ class EventLoop:
         self._registry = registry
         self._max_turns = max_turns
         self._session_locks: dict[str, asyncio.Lock] = {}
+
+    def release_session(self, session_id: str) -> None:
+        """Release any per-session resources once a session is finished."""
+        self._session_locks.pop(session_id, None)
 
     async def process_turn(self, session: Session, user_message: str) -> str:
         """Process one user turn until the model returns final text.
@@ -68,16 +77,21 @@ class EventLoop:
                         }
                     )
                     for tool_call in response.tool_calls:
-                        result = await self._dispatcher.dispatch(
-                            tool_call.name,
-                            tool_call.params,
-                            session.id,
-                        )
+                        try:
+                            result = await self._dispatcher.dispatch(
+                                tool_call.name,
+                                tool_call.params,
+                                session.id,
+                            )
+                            content = json.dumps(result.model_dump())
+                        except Exception as exc:
+                            content = json.dumps({"error": str(exc)})
+
                         session.messages.append(
                             {
                                 "role": "tool",
                                 "name": tool_call.name,
-                                "content": result.model_dump(),
+                                "content": content,
                             }
                         )
 

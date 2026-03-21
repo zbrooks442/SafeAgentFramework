@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -25,6 +26,18 @@ class _FakeDispatcher:
     ) -> ToolResult[Any]:
         self.calls.append((tool_name, params, session_id))
         return ToolResult(success=True, data={"echo": params})
+
+
+class _FailingDispatcher(_FakeDispatcher):
+    async def dispatch(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        session_id: str,
+    ) -> ToolResult[Any]:
+        self.calls.append((tool_name, params, session_id))
+        msg = f"boom for {tool_name}"
+        raise RuntimeError(msg)
 
 
 class _FakeLLM:
@@ -125,7 +138,44 @@ def test_tool_call_then_text(registry: ModuleRegistry) -> None:
     }
     assert session.messages[2]["role"] == "tool"
     assert session.messages[2]["name"] == "demo:echo"
+    assert isinstance(session.messages[2]["content"], str)
+    assert json.loads(session.messages[2]["content"]) == {
+        "success": True,
+        "data": {"echo": {"value": 1}},
+        "error": None,
+        "metadata": {},
+    }
     assert session.messages[3] == {"role": "assistant", "content": "tool complete"}
+
+
+def test_tool_dispatch_failure_appends_error_tool_message(
+    registry: ModuleRegistry,
+) -> None:
+    dispatcher = _FailingDispatcher()
+    llm = _FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=[ToolCall(name="demo:echo", params={"value": 1})]
+            ),
+            LLMResponse(content="tool failed cleanly"),
+        ]
+    )
+    event_loop = EventLoop(dispatcher, llm, registry)
+    session = Session(id="session-1")
+
+    result = asyncio.run(event_loop.process_turn(session, "run tool"))
+
+    assert result == "tool failed cleanly"
+    assert dispatcher.calls == [("demo:echo", {"value": 1}, "session-1")]
+    assert session.messages[2] == {
+        "role": "tool",
+        "name": "demo:echo",
+        "content": json.dumps({"error": "boom for demo:echo"}),
+    }
+    assert session.messages[3] == {
+        "role": "assistant",
+        "content": "tool failed cleanly",
+    }
 
 
 def test_turn_limit_enforced(registry: ModuleRegistry) -> None:
@@ -176,3 +226,18 @@ async def test_session_lock_serializes_concurrent_calls(
         {"role": "user", "content": "two"},
         {"role": "assistant", "content": "second"},
     ]
+
+
+def test_release_session_removes_lock(registry: ModuleRegistry) -> None:
+    dispatcher = _FakeDispatcher()
+    llm = _FakeLLM([LLMResponse(content="done")])
+    event_loop = EventLoop(dispatcher, llm, registry)
+    session = Session(id="session-1")
+
+    asyncio.run(event_loop.process_turn(session, "hello"))
+
+    assert session.id in event_loop._session_locks
+
+    event_loop.release_session(session.id)
+
+    assert session.id not in event_loop._session_locks
