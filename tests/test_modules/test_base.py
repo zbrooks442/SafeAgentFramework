@@ -3,6 +3,7 @@
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from safe_agent.modules.base import (
     BaseModule,
@@ -48,9 +49,12 @@ class ConcreteModule(BaseModule):
         self,
         tool_name: str,
         params: dict[str, Any],
-    ) -> ToolResult:
+    ) -> ToolResult[str]:
         """Return a successful ToolResult with greeting data."""
-        return ToolResult(success=True, data=f"Hello, {params.get('name', 'world')}!")
+        return ToolResult[str](
+            success=True,
+            data=f"Hello, {params.get('name', 'world')}!",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +169,20 @@ class TestToolResult:
 
     def test_success_with_data(self) -> None:
         """ToolResult should store success flag and data."""
-        r = ToolResult(success=True, data={"value": 42})
+        r = ToolResult[dict[str, int]](success=True, data={"value": 42})
         assert r.success is True
         assert r.data == {"value": 42}
         assert r.error is None
+
+    def test_generic_string_payload(self) -> None:
+        """ToolResult should support typed scalar payloads via generics."""
+        r = ToolResult[str](success=True, data="hello")
+        assert r.data == "hello"
+
+    def test_generic_payload_validation_rejects_wrong_type(self) -> None:
+        """Parameterized ToolResult should validate the payload type at runtime."""
+        with pytest.raises(ValidationError):
+            ToolResult[int](success=True, data="not-an-int")
 
     def test_failure_with_error(self) -> None:
         """ToolResult should store error message on failure."""
