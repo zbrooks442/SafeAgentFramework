@@ -117,9 +117,7 @@ def test_tool_call_then_text(registry: ModuleRegistry) -> None:
     dispatcher = _FakeDispatcher()
     llm = _FakeLLM(
         [
-            LLMResponse(
-                tool_calls=[ToolCall(name="demo:echo", params={"value": 1})]
-            ),
+            LLMResponse(tool_calls=[ToolCall(name="demo:echo", params={"value": 1})]),
             LLMResponse(content="tool complete"),
         ]
     )
@@ -154,9 +152,7 @@ def test_tool_dispatch_failure_appends_error_tool_message(
     dispatcher = _FailingDispatcher()
     llm = _FakeLLM(
         [
-            LLMResponse(
-                tool_calls=[ToolCall(name="demo:echo", params={"value": 1})]
-            ),
+            LLMResponse(tool_calls=[ToolCall(name="demo:echo", params={"value": 1})]),
             LLMResponse(content="tool failed cleanly"),
         ]
     )
