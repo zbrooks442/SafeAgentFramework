@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shlex
 from pathlib import Path
@@ -15,20 +16,55 @@ from safe_agent.modules.base import (
     ToolResult,
 )
 
-# Default PATH for subprocesses - known-safe directories only
-_DEFAULT_SAFE_PATH = "/usr/bin:/bin"
+logger = logging.getLogger(__name__)
 
-# Environment variables that are blocked from LLM override for security
-# These can affect process execution behavior in dangerous ways
+# Default PATH for subprocesses - known-safe directories only
+# Covers Linux and macOS common binary locations
+_DEFAULT_SAFE_PATH = "/usr/local/bin:/usr/bin:/bin"
+
+# Environment variables that are blocked from LLM override for security.
+# These can affect process execution behavior in dangerous ways.
+#
+# Categories:
+# - Binary/library injection: PATH, LD_*, DYLD_* (macOS)
+# - Shell code injection: BASH_ENV, ENV, ENVIRONMENT
+# - Interpreter code injection: PYTHON*, NODE_OPTIONS, PERL5OPT, RUBYOPT,
+#   JAVA_TOOL_OPTIONS
+# - Debug manipulation: LD_DEBUG
 _BLOCKED_ENV_OVERRIDES: frozenset[str] = frozenset(
     {
-        "PATH",  # Arbitrary binary execution
-        "LD_PRELOAD",  # Library injection
-        "LD_LIBRARY_PATH",  # Library hijacking
-        "LD_DEBUG",  # Debug output manipulation
-        "PYTHONPATH",  # Python code injection
-        "PYTHONHOME",  # Python interpreter manipulation
-        "PYTHONEXECUTABLE",  # Python interpreter substitution
+        # Binary execution control
+        "PATH",
+        # Linux library injection
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "LD_AUDIT",  # Equivalent to LD_PRELOAD on Linux
+        "LD_DEBUG",
+        # macOS library injection
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        # Shell code injection
+        "BASH_ENV",
+        "ENV",
+        "ENVIRONMENT",
+        # Python code injection
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONEXECUTABLE",
+        "PYTHONSTARTUP",
+        # Node.js code injection
+        "NODE_OPTIONS",
+        # Perl code injection
+        "PERL5OPT",
+        "PERL5LIB",
+        # Ruby code injection
+        "RUBYOPT",
+        "RUBYLIB",
+        # Java options injection
+        "JAVA_TOOL_OPTIONS",
+        "_JAVA_OPTIONS",
+        "JAVA_OPTS",
     }
 )
 
@@ -50,9 +86,10 @@ class ShellModule(BaseModule):
             default_timeout: Timeout used when a tool call does not override it.
             max_output_size: Maximum bytes retained for each output stream.
             allowed_env_vars: Whitelist of host environment variable names to
-                pass through to subprocesses. If None, no host env vars are
-                inherited (secure default). Variables in this list are still
-                subject to security blocking rules.
+                pass through to subprocesses. If None or empty, no host env vars
+                are inherited (secure default). Note: The security blocklist only
+                applies to LLM-provided env overrides; operators are trusted, so
+                vars in this whitelist (including PATH) will override defaults.
         """
         self.working_directory = (
             working_directory.resolve() if working_directory is not None else None
@@ -225,8 +262,11 @@ class ShellModule(BaseModule):
             key_str = str(key)
             # Block dangerous environment variable overrides
             if key_str in _BLOCKED_ENV_OVERRIDES:
-                # Silently ignore blocked overrides - they're not user errors
-                # but potential security exploits
+                # Log blocked override attempts for security auditing
+                logger.warning(
+                    "Blocked dangerous env var override attempt: %s",
+                    key_str,
+                )
                 continue
             env[key_str] = str(value)
 

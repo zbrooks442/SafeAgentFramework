@@ -320,7 +320,7 @@ class TestShellModuleEnvSecurity:
         assert result.success is True
         assert result.data is not None
         # Should be safe path, not host PATH
-        assert result.data["stdout"].strip() == "/usr/bin:/bin"
+        assert result.data["stdout"].strip() == "/usr/local/bin:/usr/bin:/bin"
 
     async def test_allowed_env_vars_pass_through(self, tmp_path: Path) -> None:
         """Whitelisted host env vars should be inherited."""
@@ -393,7 +393,7 @@ class TestShellModuleEnvSecurity:
         assert result.success is True
         assert result.data is not None
         # Should still be safe path, not malicious one
-        assert result.data["stdout"].strip() == "/usr/bin:/bin"
+        assert result.data["stdout"].strip() == "/usr/local/bin:/usr/bin:/bin"
         assert "/malicious" not in result.data["stdout"]
 
     async def test_ld_preload_override_blocked(self, tmp_path: Path) -> None:
@@ -503,13 +503,26 @@ class TestShellModuleEnvSecurity:
         module = ShellModule(working_directory=tmp_path)
 
         blocked_vars = {
+            # Binary/library injection
             "PATH": "/evil/bin",
             "LD_PRELOAD": "/evil/lib.so",
             "LD_LIBRARY_PATH": "/evil/lib",
+            "LD_AUDIT": "/evil/audit.so",
             "LD_DEBUG": "all",
+            # Shell code injection
+            "BASH_ENV": "/evil/bash.sh",
+            "ENV": "/evil/env.sh",
+            "ENVIRONMENT": "/evil/environment",
+            # Python code injection
             "PYTHONPATH": "/evil/python",
             "PYTHONHOME": "/evil/pyhome",
             "PYTHONEXECUTABLE": "/evil/python",
+            "PYTHONSTARTUP": "/evil/startup.py",
+            # Other interpreter injection
+            "NODE_OPTIONS": "--require=/evil/node.js",
+            "PERL5OPT": "-I/evil/perl",
+            "RUBYOPT": "-I/evil/ruby",
+            "JAVA_TOOL_OPTIONS": "-Devil=true",
         }
 
         result = await module.execute(
@@ -525,10 +538,19 @@ class TestShellModuleEnvSecurity:
                         "'PATH': os.environ.get('PATH', 'NONE'), "
                         "'LD_PRELOAD': os.environ.get('LD_PRELOAD', 'NONE'), "
                         "'LD_LIBRARY_PATH': os.environ.get('LD_LIBRARY_PATH', 'NONE'), "
+                        "'LD_AUDIT': os.environ.get('LD_AUDIT', 'NONE'), "
                         "'LD_DEBUG': os.environ.get('LD_DEBUG', 'NONE'), "
+                        "'BASH_ENV': os.environ.get('BASH_ENV', 'NONE'), "
+                        "'ENV': os.environ.get('ENV', 'NONE'), "
                         "'PYTHONPATH': os.environ.get('PYTHONPATH', 'NONE'), "
                         "'PYTHONHOME': os.environ.get('PYTHONHOME', 'NONE'), "
-                        "'PYTHONEXECUTABLE': os.environ.get('PYTHONEXECUTABLE', 'NONE')}; "
+                        "'PYTHONEXECUTABLE': os.environ.get("
+                        "'PYTHONEXECUTABLE', 'NONE'), "
+                        "'NODE_OPTIONS': os.environ.get('NODE_OPTIONS', 'NONE'), "
+                        "'PERL5OPT': os.environ.get('PERL5OPT', 'NONE'), "
+                        "'RUBYOPT': os.environ.get('RUBYOPT', 'NONE'), "
+                        "'JAVA_TOOL_OPTIONS': os.environ.get("
+                        "'JAVA_TOOL_OPTIONS', 'NONE')}; "
                         "print(json.dumps(data))"
                     ),
                 ],
@@ -542,10 +564,18 @@ class TestShellModuleEnvSecurity:
 
         values = json.loads(result.data["stdout"].strip())
         # PATH should be default safe path, not malicious override
-        assert values["PATH"] == "/usr/bin:/bin"
+        assert values["PATH"] == "/usr/local/bin:/usr/bin:/bin"
+        # All other blocked vars should be NONE
         assert values["LD_PRELOAD"] == "NONE"
         assert values["LD_LIBRARY_PATH"] == "NONE"
+        assert values["LD_AUDIT"] == "NONE"
         assert values["LD_DEBUG"] == "NONE"
+        assert values["BASH_ENV"] == "NONE"
+        assert values["ENV"] == "NONE"
         assert values["PYTHONPATH"] == "NONE"
         assert values["PYTHONHOME"] == "NONE"
         assert values["PYTHONEXECUTABLE"] == "NONE"
+        assert values["NODE_OPTIONS"] == "NONE"
+        assert values["PERL5OPT"] == "NONE"
+        assert values["RUBYOPT"] == "NONE"
+        assert values["JAVA_TOOL_OPTIONS"] == "NONE"
