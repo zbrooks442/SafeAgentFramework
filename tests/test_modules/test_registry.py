@@ -456,10 +456,10 @@ class TestModuleRegistry:
         assert registry._discovered is False
 
     def test_discover_loads_builtin_modules_from_real_entry_points(self) -> None:
-        """discover() should load FilesystemModule and ShellModule from installed package.
+        """discover() should load FilesystemModule and ShellModule from package.
 
-        Integration test verifying the entry points defined in pyproject.toml actually
-        resolve and register correctly. This is the dogfood test for issue #28.
+        Integration test verifying entry points in pyproject.toml resolve.
+        Dogfood test for issue #28.
         """
         registry = ModuleRegistry()
         registry.discover()
