@@ -69,6 +69,10 @@ pip install -e ".[dev]"
 pytest
 ```
 
+> **Note:** The core package is lightweight (~5MB). If you need RAG capabilities
+> with vector storage, install with `pip install -e ".[rag,dev]"` instead. This
+> adds `chromadb` and `tiktoken` (~500MB+ with dependencies).
+
 ## Development
 
 **Requires:** Python 3.13+
