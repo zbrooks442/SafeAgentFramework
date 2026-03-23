@@ -16,7 +16,17 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
 
     Rewrites ``tool_calls[].name`` in assistant messages and ``name`` in tool
     result messages so all tool references use ``__`` instead of ``:`` as the
-    namespace separator.  The original session transcript is not mutated.
+    namespace separator.
+
+    **Precondition:** tool_calls entries must use the flat SafeAgent format
+    ``{"name": ..., "params": ...}``, not the OpenAI-native
+    ``{"id": ..., "type": "function", "function": {"name": ..., "arguments": ...}}``
+    structure.  The session transcript always stores the SafeAgent format;
+    LLM clients are responsible for any further provider-specific adaptation.
+
+    This function performs a *shallow* copy of each message dict and each
+    tool_call dict.  Nested values (e.g. ``params``) are **not** deep-copied;
+    the caller must not mutate them.
     """
     sanitized = []
     for msg in messages:
@@ -24,6 +34,7 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
             sanitized_calls = [
                 {**tc, "name": sanitize_tool_name(tc["name"])}
                 for tc in msg["tool_calls"]
+                if tc.get("name") is not None
             ]
             sanitized.append({**msg, "tool_calls": sanitized_calls})
         elif msg.get("role") == "tool" and msg.get("name"):

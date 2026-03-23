@@ -13,11 +13,16 @@ _TOOL_NAME_REPLACEMENT = "__"
 
 
 def sanitize_tool_name(name: str) -> str:
-    """Replace colons in *name* with ``__`` for provider compatibility.
+    """Replace the first colon in *name* with ``__`` for provider compatibility.
 
     Some LLM providers (e.g. OpenAI) require function names to match
     ``^[a-zA-Z0-9_-]+$`` and therefore reject the colon namespace separator
     used by SafeAgent tool names (``"filesystem:read_file"``).
+
+    Only the **first** colon is replaced, matching the ``namespace:tool`` convention
+    enforced by :class:`~safe_agent.modules.base.ToolDescriptor`.  Tool names
+    containing ``__`` are rejected at registration time, making the one-colon
+    assumption safe by construction.
 
     The :class:`EventLoop` calls this automatically before passing tool
     definitions and message history to the :class:`LLMClient`, so
@@ -30,11 +35,11 @@ def sanitize_tool_name(name: str) -> str:
     Returns:
         The sanitized name, e.g. ``"filesystem__read_file"``.
     """
-    return name.replace(_TOOL_NAME_SEPARATOR, _TOOL_NAME_REPLACEMENT)
+    return name.replace(_TOOL_NAME_SEPARATOR, _TOOL_NAME_REPLACEMENT, 1)
 
 
 def restore_tool_name(name: str) -> str:
-    """Reverse :func:`sanitize_tool_name` — restore ``__`` to ``:``.
+    """Reverse :func:`sanitize_tool_name` — restore the first ``__`` to ``:``.
 
     Args:
         name: A sanitized tool name such as ``"filesystem__read_file"``.
@@ -42,7 +47,7 @@ def restore_tool_name(name: str) -> str:
     Returns:
         The original SafeAgent tool name, e.g. ``"filesystem:read_file"``.
     """
-    return name.replace(_TOOL_NAME_REPLACEMENT, _TOOL_NAME_SEPARATOR)
+    return name.replace(_TOOL_NAME_REPLACEMENT, _TOOL_NAME_SEPARATOR, 1)
 
 
 class ToolCall(BaseModel):

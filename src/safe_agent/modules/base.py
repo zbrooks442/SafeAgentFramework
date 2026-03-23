@@ -26,6 +26,25 @@ class ToolDescriptor(BaseModel):
     resource_param: list[str] = Field(default_factory=list)
     condition_keys: list[str] = Field(default_factory=list)
 
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        """Reject names containing ``__`` (double underscore).
+
+        SafeAgent uses ``__`` as the LLM-boundary sanitization replacement for
+        the ``:`` namespace separator (see
+        :func:`safe_agent.core.llm.sanitize_tool_name`).
+        A tool name that already contains ``__`` would make the colon-restore
+        round-trip ambiguous and silently corrupt dispatch.
+        """
+        if "__" in v:
+            msg = (
+                f"Tool name {v!r} must not contain '__' (double underscore); "
+                "that sequence is reserved for LLM provider name sanitization."
+            )
+            raise ValueError(msg)
+        return v
+
     @field_validator("resource_param", mode="before")
     @classmethod
     def _coerce_resource_param(cls, v: Any) -> list[str]:
