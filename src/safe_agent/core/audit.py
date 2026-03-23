@@ -131,6 +131,11 @@ class AuditLogger:
         self._lock = threading.Lock()
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def log_path(self) -> Path:
+        """Return the path to the audit log file."""
+        return self._log_path
+
     @staticmethod
     def now_iso() -> str:
         """Return the current UTC time as an ISO-8601 string.

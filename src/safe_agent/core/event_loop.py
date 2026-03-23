@@ -65,6 +65,11 @@ class EventLoop:
         self._max_turns = max_turns
         self._session_locks: dict[str, asyncio.Lock] = {}
 
+    @property
+    def max_turns(self) -> int:
+        """Return the maximum turn limit for tool-call loops."""
+        return self._max_turns
+
     def release_session(self, session_id: str) -> None:
         """Release any per-session resources once a session is finished."""
         self._session_locks.pop(session_id, None)
