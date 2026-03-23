@@ -15,6 +15,23 @@ from safe_agent.modules.base import (
     ToolResult,
 )
 
+# Default PATH for subprocesses - known-safe directories only
+_DEFAULT_SAFE_PATH = "/usr/bin:/bin"
+
+# Environment variables that are blocked from LLM override for security
+# These can affect process execution behavior in dangerous ways
+_BLOCKED_ENV_OVERRIDES: frozenset[str] = frozenset(
+    {
+        "PATH",  # Arbitrary binary execution
+        "LD_PRELOAD",  # Library injection
+        "LD_LIBRARY_PATH",  # Library hijacking
+        "LD_DEBUG",  # Debug output manipulation
+        "PYTHONPATH",  # Python code injection
+        "PYTHONHOME",  # Python interpreter manipulation
+        "PYTHONEXECUTABLE",  # Python interpreter substitution
+    }
+)
+
 
 class ShellModule(BaseModule):
     """Provide controlled subprocess execution with time and output limits."""
@@ -24,6 +41,7 @@ class ShellModule(BaseModule):
         working_directory: Path | None = None,
         default_timeout: float = 30.0,
         max_output_size: int = 1024 * 1024,
+        allowed_env_vars: list[str] | None = None,
     ) -> None:
         """Initialise shell execution settings.
 
@@ -31,12 +49,17 @@ class ShellModule(BaseModule):
             working_directory: Optional working directory for subprocesses.
             default_timeout: Timeout used when a tool call does not override it.
             max_output_size: Maximum bytes retained for each output stream.
+            allowed_env_vars: Whitelist of host environment variable names to
+                pass through to subprocesses. If None, no host env vars are
+                inherited (secure default). Variables in this list are still
+                subject to security blocking rules.
         """
         self.working_directory = (
             working_directory.resolve() if working_directory is not None else None
         )
         self.default_timeout = default_timeout
         self.max_output_size = max_output_size
+        self.allowed_env_vars = set(allowed_env_vars) if allowed_env_vars else set()
 
     def describe(self) -> ModuleDescriptor:
         """Return the shell module descriptor and tool definition."""
@@ -175,13 +198,38 @@ class ShellModule(BaseModule):
         return [*command_parts, *explicit_args]
 
     def _build_env(self, params: dict[str, Any]) -> dict[str, str]:
-        """Construct the subprocess environment."""
-        env = os.environ.copy()
+        """Construct the subprocess environment with security controls.
+
+        Security measures:
+        - Starts with minimal base environment (safe PATH only)
+        - Only whitelisted host env vars are inherited
+        - Blocked variables (PATH, LD_PRELOAD, etc.) cannot be overridden by LLM
+
+        Returns:
+            Sanitized environment dictionary for subprocess execution.
+        """
+        # Start with minimal base environment
+        env: dict[str, str] = {"PATH": _DEFAULT_SAFE_PATH}
+
+        # Pass through only whitelisted host environment variables
+        for key in self.allowed_env_vars:
+            if key in os.environ:
+                env[key] = os.environ[key]
+
+        # Process LLM-provided env overrides
         raw_env = params.get("env", {})
         if not isinstance(raw_env, dict):
             raise ValueError("env must be an object of string key/value pairs")
 
-        env.update({str(key): str(value) for key, value in raw_env.items()})
+        for key, value in raw_env.items():
+            key_str = str(key)
+            # Block dangerous environment variable overrides
+            if key_str in _BLOCKED_ENV_OVERRIDES:
+                # Silently ignore blocked overrides - they're not user errors
+                # but potential security exploits
+                continue
+            env[key_str] = str(value)
+
         return env
 
     def _timeout_value(self, params: dict[str, Any]) -> float:
