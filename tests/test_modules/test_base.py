@@ -236,3 +236,37 @@ class TestBaseModule:
         assert isinstance(result, ToolResult)
         assert result.success is True
         assert result.data == "Hello, Alice!"
+
+
+class TestToolDescriptorNameValidation:
+    """Tests for the ToolDescriptor name validator."""
+
+    def test_valid_name_accepted(self) -> None:
+        """A normal namespace:tool name is accepted."""
+        td = ToolDescriptor(
+            name="filesystem:read_file",
+            description="Read a file.",
+            parameters={},
+            action="filesystem:ReadFile",
+        )
+        assert td.name == "filesystem:read_file"
+
+    def test_double_underscore_rejected(self) -> None:
+        """A name containing __ must be rejected to prevent sanitization ambiguity."""
+        with pytest.raises(ValidationError, match="__"):
+            ToolDescriptor(
+                name="my_module:list__items",
+                description="Bad name.",
+                parameters={},
+                action="my_module:ListItems",
+            )
+
+    def test_single_underscore_allowed(self) -> None:
+        """Single underscores in tool names are fine."""
+        td = ToolDescriptor(
+            name="shell:run_command",
+            description="Run a command.",
+            parameters={},
+            action="shell:RunCommand",
+        )
+        assert td.name == "shell:run_command"

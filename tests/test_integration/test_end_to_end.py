@@ -104,7 +104,8 @@ async def test_allowed_tool_call_succeeds_end_to_end(tmp_path: Path) -> None:
             LLMResponse(
                 tool_calls=[
                     ToolCall(
-                        name="test:echo",
+                        # LLM returns sanitized name (as a real provider would)
+                        name="test__echo",
                         params={
                             "target": "allowed-resource",
                             "message": "hello world",
@@ -129,9 +130,11 @@ async def test_allowed_tool_call_succeeds_end_to_end(tmp_path: Path) -> None:
     assert session_id is not None
     assert len(llm.calls) == 2
     assert llm.calls[0]["messages"] == [{"role": "user", "content": "say hi"}]
+    # The event loop sends sanitized names to the LLM; tool result messages
+    # in the history the LLM receives also use the sanitized form.
     tool_message = llm.calls[1]["messages"][-1]
     assert tool_message["role"] == "tool"
-    assert tool_message["name"] == "test:echo"
+    assert tool_message["name"] == "test__echo"
     assert json.loads(tool_message["content"]) == {
         "success": True,
         "data": {"echoed": "hello world"},

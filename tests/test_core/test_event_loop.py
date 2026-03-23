@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from safe_agent.core import EventLoop, LLMResponse, Session, ToolCall
+from safe_agent.core.event_loop import _sanitize_messages
 from safe_agent.modules.base import (
     BaseModule,
     ModuleDescriptor,
@@ -237,3 +238,135 @@ def test_release_session_removes_lock(registry: ModuleRegistry) -> None:
     event_loop.release_session(session.id)
 
     assert session.id not in event_loop._session_locks
+
+
+# ---------------------------------------------------------------------------
+# Tool name sanitization tests
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeMessages:
+    """Tests for the _sanitize_messages helper."""
+
+    def test_sanitizes_tool_calls_in_assistant_message(self) -> None:
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"name": "filesystem:read_file", "params": {}}],
+            }
+        ]
+        result = _sanitize_messages(messages)
+        assert result[0]["tool_calls"][0]["name"] == "filesystem__read_file"
+
+    def test_sanitizes_tool_result_name(self) -> None:
+        messages = [{"role": "tool", "name": "filesystem:read_file", "content": "{}"}]
+        result = _sanitize_messages(messages)
+        assert result[0]["name"] == "filesystem__read_file"
+
+    def test_does_not_mutate_original(self) -> None:
+        original_tc = {"name": "filesystem:read_file", "params": {}}
+        messages = [{"role": "assistant", "content": None, "tool_calls": [original_tc]}]
+        _sanitize_messages(messages)
+        assert original_tc["name"] == "filesystem:read_file"
+
+    def test_passthrough_non_tool_messages(self) -> None:
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        result = _sanitize_messages(messages)
+        assert result == messages
+
+
+def test_llm_receives_sanitized_tool_names(registry: ModuleRegistry) -> None:
+    """EventLoop must send sanitized names to the LLM client."""
+    dispatcher = _FakeDispatcher()
+    llm = _FakeLLM([LLMResponse(content="done")])
+    event_loop = EventLoop(dispatcher, llm, registry)
+    session = Session(id="session-1")
+
+    asyncio.run(event_loop.process_turn(session, "hello"))
+
+    _, tools_sent = llm.calls[0]
+    for tool in tools_sent:
+        assert ":" not in tool["name"], (
+            f"Tool name '{tool['name']}' sent to LLM still contains a colon"
+        )
+    assert any(t["name"] == "demo__echo" for t in tools_sent)
+
+
+def test_llm_tool_call_name_restored_before_dispatch(
+    registry: ModuleRegistry,
+) -> None:
+    """LLM returns sanitized name; dispatcher must receive the canonical name."""
+    dispatcher = _FakeDispatcher()
+    # LLM returns the sanitized name as a provider would
+    llm = _FakeLLM(
+        [
+            LLMResponse(tool_calls=[ToolCall(name="demo__echo", params={"value": 42})]),
+            LLMResponse(content="done"),
+        ]
+    )
+    event_loop = EventLoop(dispatcher, llm, registry)
+    session = Session(id="session-1")
+
+    asyncio.run(event_loop.process_turn(session, "run tool"))
+
+    dispatched_name, _, _ = dispatcher.calls[0]
+    assert dispatched_name == "demo:echo", (
+        f"Expected canonical 'demo:echo' at dispatch, got '{dispatched_name}'"
+    )
+
+
+def test_session_transcript_stores_canonical_names(
+    registry: ModuleRegistry,
+) -> None:
+    """Session history must always use canonical colon-style names."""
+    dispatcher = _FakeDispatcher()
+    llm = _FakeLLM(
+        [
+            LLMResponse(tool_calls=[ToolCall(name="demo__echo", params={"v": 1})]),
+            LLMResponse(content="done"),
+        ]
+    )
+    event_loop = EventLoop(dispatcher, llm, registry)
+    session = Session(id="session-1")
+
+    asyncio.run(event_loop.process_turn(session, "go"))
+
+    assistant_msg = session.messages[1]
+    assert assistant_msg["tool_calls"][0]["name"] == "demo:echo"
+    tool_result_msg = session.messages[2]
+    assert tool_result_msg["name"] == "demo:echo"
+
+
+def test_sanitized_history_sent_to_llm_on_second_turn(
+    registry: ModuleRegistry,
+) -> None:
+    """On second LLM call, prior tool_calls in history must be re-sanitized."""
+    dispatcher = _FakeDispatcher()
+    llm = _FakeLLM(
+        [
+            LLMResponse(tool_calls=[ToolCall(name="demo__echo", params={"v": 1})]),
+            LLMResponse(content="done"),
+        ]
+    )
+    event_loop = EventLoop(dispatcher, llm, registry)
+    session = Session(id="session-1")
+
+    asyncio.run(event_loop.process_turn(session, "go"))
+
+    # Second LLM call receives the history; tool_calls in it must be sanitized
+    second_call_messages, _ = llm.calls[1]
+    assistant_history = [
+        m
+        for m in second_call_messages
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    ]
+    for msg in assistant_history:
+        for tc in msg["tool_calls"]:
+            assert ":" not in tc["name"], (
+                f"History tool_call name '{tc['name']}' "
+                "not sanitized on second LLM call"
+            )

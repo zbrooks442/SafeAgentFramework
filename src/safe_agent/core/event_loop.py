@@ -6,9 +6,42 @@ import asyncio
 import json
 
 from safe_agent.core.dispatcher import ToolDispatcher
-from safe_agent.core.llm import LLMClient
+from safe_agent.core.llm import LLMClient, restore_tool_name, sanitize_tool_name
 from safe_agent.core.session import Session
 from safe_agent.modules.registry import ModuleRegistry
+
+
+def _sanitize_messages(messages: list[dict]) -> list[dict]:
+    """Return a copy of *messages* with tool names sanitized for LLM providers.
+
+    Rewrites ``tool_calls[].name`` in assistant messages and ``name`` in tool
+    result messages so all tool references use ``__`` instead of ``:`` as the
+    namespace separator.
+
+    **Precondition:** tool_calls entries must use the flat SafeAgent format
+    ``{"name": ..., "params": ...}``, not the OpenAI-native
+    ``{"id": ..., "type": "function", "function": {"name": ..., "arguments": ...}}``
+    structure.  The session transcript always stores the SafeAgent format;
+    LLM clients are responsible for any further provider-specific adaptation.
+
+    This function performs a *shallow* copy of each message dict and each
+    tool_call dict.  Nested values (e.g. ``params``) are **not** deep-copied;
+    the caller must not mutate them.
+    """
+    sanitized = []
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            sanitized_calls = [
+                {**tc, "name": sanitize_tool_name(tc["name"])}
+                for tc in msg["tool_calls"]
+                if tc.get("name") is not None
+            ]
+            sanitized.append({**msg, "tool_calls": sanitized_calls})
+        elif msg.get("role") == "tool" and msg.get("name"):
+            sanitized.append({**msg, "name": sanitize_tool_name(msg["name"])})
+        else:
+            sanitized.append(msg)
+    return sanitized
 
 
 class EventLoop:
@@ -47,15 +80,21 @@ class EventLoop:
 
         async with lock:
             session.messages.append({"role": "user", "content": user_message})
+
+            # Build tool definitions with sanitized names for LLM provider
+            # compatibility (some providers forbid colons in function names).
             tool_definitions = [
-                descriptor.model_dump()
+                {**descriptor.model_dump(), "name": sanitize_tool_name(descriptor.name)}
                 for descriptor in self._registry.get_all_tool_descriptors()
             ]
 
             turn_count = 0
             while True:
+                # Pass sanitized tool names and a sanitized view of any prior
+                # tool_calls entries in the session history.
+                sanitized_messages = _sanitize_messages(session.messages)
                 response = await self._llm_client.chat(
-                    session.messages,
+                    sanitized_messages,
                     tool_definitions,
                 )
 
@@ -66,17 +105,24 @@ class EventLoop:
                     return response.content
 
                 if response.tool_calls:
+                    # Restore canonical colon-style names before storing in the
+                    # session transcript and dispatching.
+                    restored_calls = [
+                        tool_call.model_copy(
+                            update={"name": restore_tool_name(tool_call.name)}
+                        )
+                        for tool_call in response.tool_calls
+                    ]
                     session.messages.append(
                         {
                             "role": "assistant",
                             "content": None,
                             "tool_calls": [
-                                tool_call.model_dump()
-                                for tool_call in response.tool_calls
+                                tool_call.model_dump() for tool_call in restored_calls
                             ],
                         }
                     )
-                    for tool_call in response.tool_calls:
+                    for tool_call in restored_calls:
                         try:
                             result = await self._dispatcher.dispatch(
                                 tool_call.name,
@@ -97,7 +143,9 @@ class EventLoop:
 
                 turn_count += 1
                 if turn_count >= self._max_turns:
-                    final_response = await self._llm_client.chat(session.messages, [])
+                    final_response = await self._llm_client.chat(
+                        _sanitize_messages(session.messages), []
+                    )
                     final_text = final_response.content or ""
                     session.messages.append(
                         {"role": "assistant", "content": final_text}
