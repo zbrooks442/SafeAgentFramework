@@ -68,9 +68,7 @@ def mock_policy_dir(tmp_path: Path) -> Path:
     """Create a temporary policy directory."""
     policy_dir = tmp_path / "policies"
     policy_dir.mkdir()
-    (policy_dir / "policy.json").write_text(
-        '{"Version": "2025-01", "Statement": []}'
-    )
+    (policy_dir / "policy.json").write_text('{"Version": "2025-01", "Statement": []}')
     return policy_dir
 
 

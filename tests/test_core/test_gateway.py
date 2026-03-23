@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from safe_agent.core.event_loop import EventLoop
 from safe_agent.core.gateway import Gateway
-from safe_agent.core.session import Session, SessionManager
+from safe_agent.core.session import Session
 
 
 class MockEventLoop:
@@ -129,9 +128,9 @@ async def test_gateway_submit_multiple_sessions() -> None:
     gateway = Gateway(session_manager, event_loop)
 
     # First session
-    response1, session_id1 = await gateway.submit("message 1")
+    _, session_id1 = await gateway.submit("message 1")
     # Second session
-    response2, session_id2 = await gateway.submit("message 2")
+    _, session_id2 = await gateway.submit("message 2")
 
     assert session_id1 != session_id2
     assert len(session_manager.sessions) == 2
