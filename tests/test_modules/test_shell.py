@@ -234,7 +234,10 @@ class TestShellModule:
                 "command": sys.executable,
                 "args": [
                     "-c",
-                    "import sys; print('x' * 10000); print('y' * 10000, file=sys.stderr)",
+                    (
+                        "import sys; print('x' * 10000); "
+                        "print('y' * 10000, file=sys.stderr)"
+                    ),
                 ],
             },
         )
@@ -247,3 +250,30 @@ class TestShellModule:
         )
         assert total_bytes <= 1000
         assert result.metadata["output_truncated"] is True
+        # Process should be killed when output exceeded limit
+        assert result.data["return_code"] == -9  # SIGKILL
+
+    async def test_incremental_reading_huge_output_counts_bytes_not_chars(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify byte counting, not character counting."""
+        limit = 100
+        module = ShellModule(working_directory=tmp_path, max_output_size=limit)
+
+        # Emojis are 4 bytes each in UTF-8
+        result = await module.execute(
+            "shell:execute",
+            {
+                "command": sys.executable,
+                "args": [
+                    "-c",
+                    "print('🎉' * 50)  # 200 bytes total",
+                ],
+            },
+        )
+
+        assert result.success is True
+        assert result.data is not None
+        # Should be truncated since emojis are multi-byte
+        total_bytes = len(result.data["stdout"].encode("utf-8"))
+        assert total_bytes <= limit

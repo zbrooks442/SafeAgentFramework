@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from safe_agent.modules.filesystem import FilesystemModule
 
 
@@ -280,3 +282,25 @@ class TestFilesystemModule:
 
         assert result.success is True
         assert result.data == {"path": "within_limit.txt", "bytes_written": 500}
+
+    async def test_write_file_accepts_exact_limit(self, tmp_path: Path) -> None:
+        """write_file should accept content exactly at max_write_size boundary."""
+        limit = 100
+        module = FilesystemModule(tmp_path, max_write_size=limit)
+        content = "x" * 100  # Exactly at limit
+
+        result = await module.execute(
+            "filesystem:write_file",
+            {"path": "exact_limit.txt", "content": content},
+        )
+
+        assert result.success is True
+        assert result.data == {"path": "exact_limit.txt", "bytes_written": 100}
+
+    def test_init_rejects_zero_or_negative_max_write_size(self, tmp_path: Path) -> None:
+        """__init__ should reject zero or negative max_write_size values."""
+        with pytest.raises(ValueError, match="max_write_size must be positive"):
+            FilesystemModule(tmp_path, max_write_size=0)
+
+        with pytest.raises(ValueError, match="max_write_size must be positive"):
+            FilesystemModule(tmp_path, max_write_size=-1)

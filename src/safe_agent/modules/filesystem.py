@@ -20,13 +20,20 @@ class FilesystemModule(BaseModule):
 
     DEFAULT_MAX_WRITE_SIZE = 10 * 1024 * 1024  # 10MB default
 
-    def __init__(self, root: Path, max_write_size: int = DEFAULT_MAX_WRITE_SIZE) -> None:
+    def __init__(
+        self, root: Path, max_write_size: int = DEFAULT_MAX_WRITE_SIZE
+    ) -> None:
         """Initialise the module with an allowed filesystem root.
 
         Args:
             root: The allowed filesystem root directory.
             max_write_size: Maximum bytes allowed per file write (default 10MB).
+
+        Raises:
+            ValueError: If max_write_size is zero or negative.
         """
+        if max_write_size <= 0:
+            raise ValueError("max_write_size must be positive")
         self.root = root.resolve()
         self.max_write_size = max_write_size
 
@@ -229,7 +236,10 @@ class FilesystemModule(BaseModule):
         if len(content_bytes) > self.max_write_size:
             return ToolResult(
                 success=False,
-                error=f"File size {len(content_bytes)} bytes exceeds maximum {self.max_write_size} bytes",
+                error=(
+                    f"File size {len(content_bytes)} bytes exceeds "
+                    f"maximum {self.max_write_size} bytes"
+                ),
             )
 
         if path.exists() and path.is_dir():
