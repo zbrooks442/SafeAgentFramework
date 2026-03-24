@@ -22,9 +22,13 @@ class FilesystemModule(BaseModule):
     """Provide sandboxed filesystem operations rooted at a single directory."""
 
     DEFAULT_MAX_WRITE_SIZE = 10 * 1024 * 1024  # 10MB default
+    DEFAULT_MAX_READ_SIZE = 10 * 1024 * 1024  # 10MB default
 
     def __init__(
-        self, root: Path | None = None, max_write_size: int = DEFAULT_MAX_WRITE_SIZE
+        self,
+        root: Path | None = None,
+        max_write_size: int = DEFAULT_MAX_WRITE_SIZE,
+        max_read_size: int = DEFAULT_MAX_READ_SIZE,
     ) -> None:
         """Initialise the module with an allowed filesystem root.
 
@@ -32,12 +36,15 @@ class FilesystemModule(BaseModule):
             root: The allowed filesystem root directory. Defaults to the current
                 working directory if not specified.
             max_write_size: Maximum bytes allowed per file write (default 10MB).
+            max_read_size: Maximum bytes allowed per file read (default 10MB).
 
         Raises:
-            ValueError: If max_write_size is zero or negative.
+            ValueError: If max_write_size or max_read_size is zero or negative.
         """
         if max_write_size <= 0:
             raise ValueError("max_write_size must be positive")
+        if max_read_size <= 0:
+            raise ValueError("max_read_size must be positive")
         self.root = (root or Path.cwd()).resolve()
         if root is None:
             logger.warning(
@@ -46,6 +53,7 @@ class FilesystemModule(BaseModule):
                 self.root,
             )
         self.max_write_size = max_write_size
+        self.max_read_size = max_read_size
 
     def describe(self) -> ModuleDescriptor:
         """Return the filesystem module descriptor and tool definitions."""
@@ -224,6 +232,21 @@ class FilesystemModule(BaseModule):
             return ToolResult(success=False, error="File not found")
         if path.is_dir():
             return ToolResult(success=False, error="Path is a directory")
+
+        # Note: TOCTOU race between stat() and read() — file could grow in the
+        # window. This is acceptable because: (1) the limit prevents unbounded
+        # allocation, just not exact enforcement, and (2) Python's read() will
+        # still be bounded by available memory; the limit provides defense-in-depth
+        # rather than a hard guarantee.
+        file_size = path.stat().st_size
+        if file_size > self.max_read_size:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"File size {file_size} bytes exceeds "
+                    f"maximum {self.max_read_size} bytes"
+                ),
+            )
 
         async with aiofiles.open(path, encoding=encoding) as file_handle:
             content = await file_handle.read()
