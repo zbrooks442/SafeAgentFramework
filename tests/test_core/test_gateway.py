@@ -15,14 +15,22 @@ class MockEventLoop:
         self.calls: list[tuple[Session, str]] = []
         self.responses: list[str] = []
         self.raise_error: Exception | None = None
+        self.released_sessions: list[str] = []
+        self._session_locks: set[str] = set()
 
     async def process_turn(self, session: Session, message: str) -> str:
         if self.raise_error:
             raise self.raise_error
         self.calls.append((session, message))
+        self._session_locks.add(session.id)
         if not self.responses:
             return "default response"
         return self.responses.pop(0)
+
+    def release_session(self, session_id: str) -> None:
+        """Release per-session resources (called on eviction)."""
+        self.released_sessions.append(session_id)
+        self._session_locks.discard(session_id)
 
 
 class MockSessionManager:
@@ -31,6 +39,7 @@ class MockSessionManager:
     def __init__(self) -> None:
         self.sessions: dict[str, Session] = {}
         self.create_calls = 0
+        self._on_evict_callback = None
 
     def create(self) -> Session:
         session = Session(id=f"session-{self.create_calls}")
@@ -40,6 +49,16 @@ class MockSessionManager:
 
     def get(self, session_id: str) -> Session | None:
         return self.sessions.get(session_id)
+
+    def set_eviction_callback(self, callback) -> None:
+        """Set eviction callback."""
+        self._on_evict_callback = callback
+
+    def trigger_eviction(self, session_id: str) -> None:
+        """Simulate eviction for testing."""
+        session = self.sessions.pop(session_id, None)
+        if session and self._on_evict_callback:
+            self._on_evict_callback(session)
 
 
 @pytest.mark.asyncio
@@ -151,3 +170,24 @@ async def test_gateway_submit_propagates_event_loop_error() -> None:
 
     with pytest.raises(RuntimeError, match="LLM provider error"):
         await gateway.submit("test message")
+
+
+def test_gateway_wires_eviction_callback_on_init() -> None:
+    """Gateway should wire eviction callback to release EventLoop locks."""
+    session_manager = MockSessionManager()
+    event_loop = MockEventLoop()
+    Gateway(session_manager, event_loop)
+
+    # Verify callback was set
+    assert session_manager._on_evict_callback is not None
+
+    # Simulate a session being created and locked
+    session = session_manager.create()
+    event_loop._session_locks.add(session.id)
+
+    # Trigger eviction
+    session_manager.trigger_eviction(session.id)
+
+    # Verify release_session was called
+    assert session.id in event_loop.released_sessions
+    assert session.id not in event_loop._session_locks

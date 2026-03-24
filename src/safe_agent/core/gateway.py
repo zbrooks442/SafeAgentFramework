@@ -14,9 +14,19 @@ class Gateway:
         session_manager: SessionManager,
         event_loop: EventLoop,
     ) -> None:
-        """Initialise the gateway dependencies."""
+        """Initialise the gateway dependencies.
+
+        Automatically wires the session eviction callback to release EventLoop
+        session locks when sessions are evicted by TTL or LRU.
+        """
         self._session_manager = session_manager
         self._event_loop = event_loop
+
+        # Wire eviction callback to release EventLoop session locks
+        # when sessions are evicted by TTL or LRU (fixes #59)
+        session_manager.set_eviction_callback(
+            lambda s: event_loop.release_session(s.id)
+        )
 
     async def submit(
         self, message: str, session_id: str | None = None
