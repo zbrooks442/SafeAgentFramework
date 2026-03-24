@@ -233,6 +233,11 @@ class FilesystemModule(BaseModule):
         if path.is_dir():
             return ToolResult(success=False, error="Path is a directory")
 
+        # Note: TOCTOU race between stat() and read() — file could grow in the
+        # window. This is acceptable because: (1) the limit prevents unbounded
+        # allocation, just not exact enforcement, and (2) Python's read() will
+        # still be bounded by available memory; the limit provides defense-in-depth
+        # rather than a hard guarantee.
         file_size = path.stat().st_size
         if file_size > self.max_read_size:
             return ToolResult(

@@ -328,10 +328,14 @@ class TestFilesystemModule:
         }
 
     async def test_read_file_accepts_exact_limit(self, tmp_path: Path) -> None:
-        """read_file should accept files exactly at max_read_size boundary."""
+        """read_file should accept files exactly at max_read_size boundary.
+
+        Note: This test uses ASCII content where byte count equals character count.
+        For UTF-8 content with multi-byte characters, the byte size would differ.
+        """
         limit = 100
         module = FilesystemModule(tmp_path, max_read_size=limit)
-        content = "x" * 100  # Exactly at limit
+        content = "x" * 100  # Exactly at limit (100 bytes for ASCII)
         (tmp_path / "exact_limit.txt").write_text(content, encoding="utf-8")
 
         result = await module.execute(
