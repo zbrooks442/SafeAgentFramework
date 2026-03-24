@@ -150,6 +150,18 @@ class TestPolicyStoreLoad:
         # Existing policy should still be there
         assert len(store.get_all_statements()) == 1
 
+    def test_malformed_json_leaves_store_unchanged(self, tmp_path):
+        """Malformed JSON (parse failure) should not leave partial state."""
+        # First file is valid
+        write_json(tmp_path, "a.json", VALID_POLICY)
+        # Second file is malformed JSON
+        (tmp_path / "b.json").write_text("{not valid json")
+        store = PolicyStore()
+        with pytest.raises(json.JSONDecodeError):
+            store.load(tmp_path)
+        # Store should be empty — no partial state from first file
+        assert store.get_all_statements() == []
+
 
 class TestPolicyStoreAddPolicy:
     """Tests for PolicyStore.add_policy()."""
