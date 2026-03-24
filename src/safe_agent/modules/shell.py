@@ -76,6 +76,7 @@ class ShellModule(BaseModule):
         self,
         working_directory: Path | None = None,
         default_timeout: float = 30.0,
+        max_timeout: float = 300.0,
         max_output_size: int = 1024 * 1024,
         allowed_env_vars: list[str] | None = None,
     ) -> None:
@@ -84,6 +85,9 @@ class ShellModule(BaseModule):
         Args:
             working_directory: Optional working directory for subprocesses.
             default_timeout: Timeout used when a tool call does not override it.
+            max_timeout: Upper bound for per-request timeouts. Prevents LLMs
+                from requesting indefinitely long-running processes (e.g., 11.5 days).
+                Default is 300 seconds (5 minutes).
             max_output_size: Maximum bytes retained for each output stream.
             allowed_env_vars: Whitelist of host environment variable names to
                 pass through to subprocesses. If None or empty, no host env vars
@@ -94,7 +98,10 @@ class ShellModule(BaseModule):
         self.working_directory = (
             working_directory.resolve() if working_directory is not None else None
         )
+        if max_timeout <= 0:
+            raise ValueError("max_timeout must be > 0")
         self.default_timeout = default_timeout
+        self.max_timeout = max_timeout
         self.max_output_size = max_output_size
         self.allowed_env_vars = set(allowed_env_vars) if allowed_env_vars else set()
 
@@ -117,7 +124,7 @@ class ShellModule(BaseModule):
                                 "type": "array",
                                 "items": {"type": "string"},
                             },
-                            "timeout": {"type": "number", "minimum": 0},
+                            "timeout": {"type": "number", "exclusiveMinimum": 0},
                             "env": {
                                 "type": "object",
                                 "additionalProperties": {"type": "string"},
@@ -273,12 +280,19 @@ class ShellModule(BaseModule):
         return env
 
     def _timeout_value(self, params: dict[str, Any]) -> float:
-        """Resolve the timeout to use for this invocation."""
+        """Resolve the timeout to use for this invocation.
+
+        The timeout is clamped to max_timeout to prevent LLMs from requesting
+        indefinitely long-running processes. A timeout of 0 is rejected because
+        it causes immediate timeout (surprising behavior).
+        """
         raw_timeout = params.get("timeout", self.default_timeout)
         timeout = float(raw_timeout)
         if timeout < 0:
             raise ValueError("timeout must be >= 0")
-        return timeout
+        if timeout == 0:
+            raise ValueError("timeout must be > 0 (immediate timeout is not allowed)")
+        return min(timeout, self.max_timeout)
 
     def _cwd(self) -> str | None:
         """Return the configured working directory for subprocess execution."""
