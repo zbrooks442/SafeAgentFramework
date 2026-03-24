@@ -12,6 +12,95 @@ import pytest
 from safe_agent.modules.shell import ShellModule
 
 
+class TestShellModuleTimeoutCap:
+    """Tests for max_timeout cap behavior (Issue #62)."""
+
+    async def test_timeout_clamped_to_max_timeout(self, tmp_path: Path) -> None:
+        """Per-request timeout exceeding max_timeout should be clamped."""
+        module = ShellModule(working_directory=tmp_path, max_timeout=1.0)
+
+        # Request 999999 seconds (~11.5 days), should be clamped to 1.0
+        result = await module.execute(
+            "shell:execute",
+            {
+                "command": sys.executable,
+                "args": ["-c", "import time; time.sleep(0.05); print('ok')"],
+                "timeout": 999999,  # Would be ~11.5 days without cap
+            },
+        )
+
+        # Should succeed because timeout is clamped to 1.0 seconds
+        assert result.success is True
+        assert result.data is not None
+        assert result.data["stdout"].strip() == "ok"
+
+    async def test_timeout_zero_is_rejected(self, tmp_path: Path) -> None:
+        """timeout=0 should be rejected (immediate timeout is surprising)."""
+        module = ShellModule(working_directory=tmp_path)
+
+        result = await module.execute(
+            "shell:execute",
+            {"command": "echo hello", "timeout": 0},
+        )
+
+        assert result.success is False
+        assert result.error == "timeout must be > 0 (immediate timeout is not allowed)"
+
+    async def test_max_timeout_configurable(self, tmp_path: Path) -> None:
+        """max_timeout should be configurable at construction time."""
+        module = ShellModule(working_directory=tmp_path, max_timeout=0.1)
+
+        # Even with default_timeout=30, max_timeout=0.1 should clamp
+        result = await module.execute(
+            "shell:execute",
+            {
+                "command": sys.executable,
+                "args": ["-c", "import time; time.sleep(1)"],
+            },
+        )
+
+        # Should timeout because clamped to 0.1 seconds
+        assert result.success is False
+        assert result.error == "Command timed out"
+
+    async def test_timeout_below_max_is_not_clamped(self, tmp_path: Path) -> None:
+        """Per-request timeout below max_timeout should not be modified."""
+        module = ShellModule(working_directory=tmp_path, max_timeout=300.0)
+
+        result = await module.execute(
+            "shell:execute",
+            {
+                "command": sys.executable,
+                "args": ["-c", "print('ok')"],
+                "timeout": 5,  # Well below max_timeout
+            },
+        )
+
+        assert result.success is True
+        assert result.data is not None
+        assert result.data["stdout"].strip() == "ok"
+
+    async def test_default_timeout_respects_max_cap(self, tmp_path: Path) -> None:
+        """default_timeout > max_timeout should be clamped when used."""
+        module = ShellModule(
+            working_directory=tmp_path,
+            default_timeout=999999,  # Would be ~11.5 days
+            max_timeout=0.1,
+        )
+
+        result = await module.execute(
+            "shell:execute",
+            {
+                "command": sys.executable,
+                "args": ["-c", "import time; time.sleep(1)"],
+            },
+        )
+
+        # Should timeout because default is clamped to max_timeout
+        assert result.success is False
+        assert result.error == "Command timed out"
+
+
 class TestShellModule:
     """Tests for ShellModule descriptors, condition resolution, and execution."""
 
