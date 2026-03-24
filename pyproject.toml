@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A security-first agentic AI framework with IAM-style policy controls"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 authors = [
     {name = "Zach Brooks"},
 ]
@@ -17,6 +17,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Security",
@@ -105,13 +106,6 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 # ---------------------------------------------------------------------------
-# Black (configured for compatibility — ruff format is the primary formatter)
-# ---------------------------------------------------------------------------
-[tool.black]
-line-length = 88
-target-version = ["py313"]
-
-# ---------------------------------------------------------------------------
 # Bandit (standalone security scanner — defense-in-depth alongside ruff S)
 # ---------------------------------------------------------------------------
 [tool.bandit]
@@ -122,7 +116,7 @@ skips = []
 # mypy
 # ---------------------------------------------------------------------------
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
