@@ -215,7 +215,7 @@ class TestPolicyStoreFreeze:
         assert len(store.get_all_statements()) == 1
 
     def test_cached_statements_returned_after_freeze(self):
-        """Verify that get_all_statements returns the cached list after freeze."""
+        """Verify that get_all_statements returns the cached tuple after freeze."""
         policy = Policy.model_validate(VALID_POLICY)
         store = PolicyStore()
         store.add_policy(policy)
@@ -224,11 +224,23 @@ class TestPolicyStoreFreeze:
         second = store.get_all_statements()
         assert first is second  # same object, not a copy
 
-    def test_freeze_empty_store_returns_empty_list(self):
-        """Freezing an empty store should return empty list from cache."""
+    def test_frozen_statements_are_immutable(self):
+        """After freeze, returned statements cannot be mutated."""
+        policy = Policy.model_validate(VALID_POLICY)
+        store = PolicyStore()
+        store.add_policy(policy)
+        store.freeze()
+        stmts = store.get_all_statements()
+        # Tuple is immutable — it doesn't have append/clear/etc methods
+        assert isinstance(stmts, tuple)
+        assert not hasattr(stmts, "append")  # no mutation methods available
+
+    def test_freeze_empty_store_returns_empty_tuple(self):
+        """Freezing an empty store should return empty tuple from cache."""
         store = PolicyStore()
         store.freeze()
-        assert store.get_all_statements() == []
+        assert store.get_all_statements() == ()
+        assert len(store.get_all_statements()) == 0
 
     def test_double_freeze_preserves_cache(self):
         """Double freeze should still return valid cached statements."""
