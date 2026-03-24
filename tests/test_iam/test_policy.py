@@ -150,6 +150,34 @@ class TestPolicyStoreFreeze:
         store.freeze()
         assert len(store.get_all_statements()) == 1
 
+    def test_cached_statements_returned_after_freeze(self):
+        """Verify that get_all_statements returns the cached list after freeze."""
+        policy = Policy.model_validate(VALID_POLICY)
+        store = PolicyStore()
+        store.add_policy(policy)
+        store.freeze()
+        first = store.get_all_statements()
+        second = store.get_all_statements()
+        assert first is second  # same object, not a copy
+
+    def test_freeze_empty_store_returns_empty_list(self):
+        """Freezing an empty store should return empty list from cache."""
+        store = PolicyStore()
+        store.freeze()
+        assert store.get_all_statements() == []
+
+    def test_double_freeze_preserves_cache(self):
+        """Double freeze should still return valid cached statements."""
+        policy = Policy.model_validate(VALID_POLICY)
+        store = PolicyStore()
+        store.add_policy(policy)
+        store.freeze()
+        first = store.get_all_statements()
+        store.freeze()  # second freeze rebuilds cache
+        second = store.get_all_statements()
+        # Cache may be rebuilt on second freeze, but contents must match
+        assert first == second
+
 
 class TestGetAllStatements:
     """Tests for PolicyStore.get_all_statements()."""
@@ -194,3 +222,13 @@ class TestGetAllStatements:
         stmts = store.get_all_statements()
         assert stmts[0].sid == "First"
         assert stmts[1].sid == "Second"
+
+    def test_returns_new_list_before_freeze(self):
+        """Before freeze, each call rebuilds the list (not cached)."""
+        policy = Policy.model_validate(VALID_POLICY)
+        store = PolicyStore()
+        store.add_policy(policy)
+        first = store.get_all_statements()
+        second = store.get_all_statements()
+        assert first is not second  # different objects
+        assert first == second  # but same contents
