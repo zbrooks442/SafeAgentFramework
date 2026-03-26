@@ -49,6 +49,7 @@ dev = [
 filesystem = "safe_agent.modules.filesystem:FilesystemModule"
 shell = "safe_agent.modules.shell:ShellModule"
 remote_ssh = "safe_agent.modules.remote_ssh:RemoteSSHModule"
+audit = "safe_agent.modules.audit:AuditModule"
 
 [project.urls]
 Repository = "https://github.com/zbrooks442/SafeAgentFramework"
