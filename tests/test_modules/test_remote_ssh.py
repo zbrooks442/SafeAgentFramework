@@ -858,3 +858,38 @@ class TestRemoteSSHModuleEdgeCases:
 
         assert result.success is False
         assert "No session" in result.error
+
+    async def test_max_sessions_limit_enforced(self) -> None:
+        """Should reject new connections when max_sessions limit is hit."""
+        module = RemoteSSHModule(max_sessions=2)
+        mock_conn1 = MockSSHConnection(hostname="switch01")
+        mock_conn2 = MockSSHConnection(hostname="switch02")
+        mock_conn3 = MockSSHConnection(hostname="switch03")
+
+        with mock.patch(
+            "asyncssh.connect",
+            side_effect=[mock_conn1, mock_conn2, mock_conn3],
+        ):
+            # Connect to first host
+            result1 = await module.execute(
+                "remote_ssh:connect",
+                {"hostname": "switch01", "username": "admin"},
+            )
+            assert result1.success is True
+
+            # Connect to second host
+            result2 = await module.execute(
+                "remote_ssh:connect",
+                {"hostname": "switch02", "username": "admin"},
+            )
+            assert result2.success is True
+
+            # Third connection should fail due to limit (checked BEFORE connect)
+            result3 = await module.execute(
+                "remote_ssh:connect",
+                {"hostname": "switch03", "username": "admin"},
+            )
+
+        assert result3.success is False
+        assert "Maximum sessions" in result3.error
+        assert len(module._sessions) == 2

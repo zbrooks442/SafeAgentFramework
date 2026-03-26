@@ -75,6 +75,7 @@ class RemoteSSHModule(BaseModule):
         max_output_size: int = 1024 * 1024,  # 1MB
         session_idle_timeout: float = 300.0,  # 5 minutes
         known_hosts_path: Path | None = None,
+        max_sessions: int = 20,
     ) -> None:
         """Initialize remote SSH module with session and security settings.
 
@@ -86,6 +87,7 @@ class RemoteSSHModule(BaseModule):
             max_output_size: Maximum bytes to retain from command output.
             session_idle_timeout: Seconds before idle sessions are closed.
             known_hosts_path: Optional path to known_hosts file for host verification.
+            max_sessions: Maximum number of concurrent SSH sessions allowed.
         """
         if max_timeout <= 0:
             raise ValueError("max_timeout must be > 0")
@@ -102,7 +104,7 @@ class RemoteSSHModule(BaseModule):
         # Active sessions: hostname -> (connection, last_used_timestamp, username)
         self._sessions: dict[str, tuple[Any, float, str]] = {}
         self._session_lock = asyncio.Lock()
-        self._max_sessions = 20  # Limit concurrent connections
+        self._max_sessions = max_sessions  # Limit concurrent connections
 
     def describe(self) -> ModuleDescriptor:
         """Return the remote SSH module descriptor and tool definitions."""
@@ -272,14 +274,28 @@ class RemoteSSHModule(BaseModule):
         # Check for existing session
         async with self._session_lock:
             if hostname_str in self._sessions:
-                conn, _, username = self._sessions[hostname_str]
-                if not conn.is_closed():
+                existing_conn, _, stored_user = self._sessions[hostname_str]
+                if not existing_conn.is_closed():
                     # Update last used time
-                    self._sessions[hostname_str] = (conn, time.monotonic(), username)
+                    self._sessions[hostname_str] = (
+                        existing_conn,
+                        time.monotonic(),
+                        stored_user,
+                    )
                     return ToolResult(
                         success=True,
-                        data={"hostname": hostname_str, "status": "already_connected"},
+                        data={
+                            "hostname": hostname_str,
+                            "status": "already_connected",
+                        },
                     )
+
+            # Check session limit BEFORE creating new connection (prevent resource leak)
+            if len(self._sessions) >= self._max_sessions:
+                return ToolResult(
+                    success=False,
+                    error=f"Maximum sessions ({self._max_sessions}) reached",
+                )
 
         # Get credentials - prefer params username but auth from stored credentials
         cred = self._credentials.get(hostname_str)
@@ -333,13 +349,8 @@ class RemoteSSHModule(BaseModule):
         except Exception as e:
             return ToolResult(success=False, error=f"SSH error: {e}")
 
-        # Check session limit
+        # Store the new session (limit already checked earlier)
         async with self._session_lock:
-            if len(self._sessions) >= self._max_sessions:
-                return ToolResult(
-                    success=False,
-                    error=f"Maximum sessions ({self._max_sessions}) reached",
-                )
             self._sessions[hostname_str] = (conn, time.monotonic(), username_str)
 
         return ToolResult(
