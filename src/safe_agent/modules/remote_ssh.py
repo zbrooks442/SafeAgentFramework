@@ -308,6 +308,11 @@ class RemoteSSHModule(BaseModule):
             # SECURITY WARNING: known_hosts=None disables host key verification.
             # This allows MITM attacks. Operators should provide known_hosts_path
             # in production. None is allowed for testing environments only.
+            logger.warning(
+                "Connecting to %s without host key verification (known_hosts not set). "
+                "This is insecure for production use.",
+                hostname_str,
+            )
             connect_kwargs["known_hosts"] = None
 
         timeout = self._default_timeout
