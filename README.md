@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/zbrooks442/SafeAgentFramework/actions/workflows/ci.yml/badge.svg)](https://github.com/zbrooks442/SafeAgentFramework/actions/workflows/ci.yml)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Coverage](https://img.shields.io/badge/coverage-85%25+-green.svg)](https://github.com/zbrooks442/SafeAgentFramework/actions)
 
 A pluggable, security-first agent framework. Build AI agents that interact with
@@ -167,4 +167,4 @@ pytest --cov
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)

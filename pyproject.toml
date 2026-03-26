@@ -7,15 +7,15 @@ name = "safe-agent"
 version = "0.1.0"
 description = "A security-first agentic AI framework with IAM-style policy controls"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.13"
 authors = [
-    {name = "Zach Brooks"},
+    {name = "Zachary Brooks"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
