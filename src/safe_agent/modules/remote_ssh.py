@@ -306,8 +306,9 @@ class RemoteSSHModule(BaseModule):
         if self._known_hosts_path:
             connect_kwargs["known_hosts"] = str(self._known_hosts_path)
         else:
-            # Default: require known_hosts for security
-            # Allow None for testing but warn in production
+            # SECURITY WARNING: known_hosts=None disables host key verification.
+            # This allows MITM attacks. Operators should provide known_hosts_path
+            # in production. None is allowed for testing environments only.
             connect_kwargs["known_hosts"] = None
 
         timeout = self._default_timeout
