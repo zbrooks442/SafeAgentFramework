@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from safe_agent.modules.base import (
     BaseModule,
@@ -12,6 +12,7 @@ from safe_agent.modules.base import (
 )
 
 
+@runtime_checkable
 class EmailBackend(Protocol):
     """Protocol for provider-specific email operations.
 
@@ -166,7 +167,7 @@ class EmailModule(BaseModule):
                     },
                     action="email:ReadInbox",
                     resource_param=["folder"],
-                    condition_keys=[],
+                    condition_keys=["email:Folder"],
                 ),
                 ToolDescriptor(
                     name="email:parse_email",
@@ -201,6 +202,7 @@ class EmailModule(BaseModule):
             email:Recipient: The 'to' parameter (recipient address(es)).
             email:Sender: The sender address from backend context (if available).
             email:Subject: The 'subject' parameter.
+            email:Folder: The 'folder' parameter for read_inbox.
 
         Note: email:Sender requires backend context and is not resolved here
         for send_email tool, as the sender is determined by the backend
@@ -218,8 +220,10 @@ class EmailModule(BaseModule):
             # Backends may inject this via context if needed
             return conditions
 
-        # read_inbox and parse_email don't resolve conditions from params
-        # Conditions for these would come from backend context (e.g., message metadata)
+        if normalized_tool == "read_inbox":
+            return {"email:Folder": params.get("folder", "inbox")}
+
+        # parse_email doesn't resolve conditions from params
         return {}
 
     async def execute(
@@ -280,7 +284,17 @@ class EmailModule(BaseModule):
     async def _execute_read_inbox(self, params: dict[str, Any]) -> ToolResult[Any]:
         """Execute email:read_inbox by delegating to backend."""
         folder = str(params.get("folder", "inbox"))
-        limit = int(params.get("limit", 10))
+        raw_limit = params.get("limit")
+        if not isinstance(raw_limit, int):
+            try:
+                limit = int(raw_limit)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return ToolResult(
+                    success=False,
+                    error=f"limit must be an integer, got {type(raw_limit).__name__}",
+                )
+        else:
+            limit = raw_limit
 
         kwargs: dict[str, Any] = {}
         if "filter" in params:

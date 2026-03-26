@@ -237,6 +237,18 @@ class TestEmailModuleDescriptor:
 
         assert read_tool.parameters["properties"]["folder"]["default"] == "inbox"
 
+    def test_describe_read_inbox_condition_keys(self) -> None:
+        """read_inbox tool should declare email:Folder condition key."""
+        backend = MockEmailBackend()
+        module = EmailModule(backend)
+
+        descriptor = module.describe()
+        read_tool = next(
+            tool for tool in descriptor.tools if tool.name == "email:read_inbox"
+        )
+
+        assert read_tool.condition_keys == ["email:Folder"]
+
     def test_describe_parse_email_parameters(self) -> None:
         """parse_email tool should have correct parameter schema."""
         backend = MockEmailBackend()
@@ -286,16 +298,28 @@ class TestEmailModuleResolveConditions:
         }
 
     async def test_resolve_conditions_read_inbox(self) -> None:
-        """resolve_conditions for read_inbox should return empty dict."""
+        """resolve_conditions for read_inbox should derive Folder."""
         backend = MockEmailBackend()
         module = EmailModule(backend)
 
         conditions = await module.resolve_conditions(
             "email:read_inbox",
-            {"folder": "inbox", "limit": 10},
+            {"folder": "archive", "limit": 10},
         )
 
-        assert conditions == {}
+        assert conditions == {"email:Folder": "archive"}
+
+    async def test_resolve_conditions_read_inbox_default_folder(self) -> None:
+        """resolve_conditions for read_inbox should use default folder."""
+        backend = MockEmailBackend()
+        module = EmailModule(backend)
+
+        conditions = await module.resolve_conditions(
+            "email:read_inbox",
+            {"limit": 10},
+        )
+
+        assert conditions == {"email:Folder": "inbox"}
 
     async def test_resolve_conditions_parse_email(self) -> None:
         """resolve_conditions for parse_email should return empty dict."""
@@ -471,6 +495,19 @@ class TestEmailModuleExecute:
         assert result.success is False
         assert "Message not found" in result.error
 
+    async def test_execute_read_inbox_invalid_limit(self) -> None:
+        """Execute read_inbox should return clear error for non-integer limit."""
+        backend = MockEmailBackend()
+        module = EmailModule(backend)
+
+        result = await module.execute(
+            "email:read_inbox",
+            {"limit": "not-a-number"},
+        )
+
+        assert result.success is False
+        assert "limit must be an integer" in result.error
+
 
 class TestEmailBackendProtocol:
     """Tests to verify EmailBackend protocol contract."""
@@ -488,3 +525,17 @@ class TestEmailBackendProtocol:
         assert hasattr(backend, "send")
         assert hasattr(backend, "read_inbox")
         assert hasattr(backend, "parse")
+
+    def test_mock_backend_is_runtime_checkable(self) -> None:
+        """MockEmailBackend should pass isinstance check with runtime_checkable."""
+        backend = MockEmailBackend()
+        assert isinstance(backend, EmailBackend)
+
+    def test_failing_backend_is_runtime_checkable(self) -> None:
+        """FailingEmailBackend should pass isinstance check with runtime_checkable."""
+        backend = FailingEmailBackend()
+        assert isinstance(backend, EmailBackend)
+
+    def test_non_backend_fails_isinstance(self) -> None:
+        """A class without protocol methods should fail isinstance check."""
+        assert not isinstance(object(), EmailBackend)
