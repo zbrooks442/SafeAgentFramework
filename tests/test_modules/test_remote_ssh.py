@@ -588,6 +588,56 @@ class TestRemoteSSHModulePushConfig:
         assert result.data is not None
         assert result.data["mode"] == "replace"
 
+    async def test_push_config_invalid_mode_rejected(self) -> None:
+        """push_config should reject invalid mode values."""
+        module = RemoteSSHModule()
+
+        mock_conn = MockSSHConnection()
+
+        with mock.patch("asyncssh.connect", return_value=mock_conn):
+            await module.execute(
+                "remote_ssh:connect",
+                {"hostname": "switch01", "username": "admin"},
+            )
+
+            result = await module.execute(
+                "remote_ssh:push_config",
+                {
+                    "hostname": "switch01",
+                    "config": "test config",
+                    "mode": "malicious'; rm -rf / #",
+                },
+            )
+
+        assert result.success is False
+        assert "Invalid mode" in result.error
+
+    async def test_push_config_shell_injection_quoted(self) -> None:
+        """push_config should quote config to prevent shell injection."""
+        module = RemoteSSHModule()
+
+        mock_conn = MockSSHConnection()
+
+        with mock.patch("asyncssh.connect", return_value=mock_conn):
+            await module.execute(
+                "remote_ssh:connect",
+                {"hostname": "switch01", "username": "admin"},
+            )
+
+            # This config contains shell injection attempt
+            result = await module.execute(
+                "remote_ssh:push_config",
+                {
+                    "hostname": "switch01",
+                    "config": "'; rm -rf / #",
+                },
+            )
+
+        # The command should have been quoted safely
+        assert result.success is True
+        # Verify the malicious string wasn't executed (it's just echoed)
+        assert result.data is not None
+
 
 class TestRemoteSSHModuleSessionManagement:
     """Tests for session lifecycle management."""

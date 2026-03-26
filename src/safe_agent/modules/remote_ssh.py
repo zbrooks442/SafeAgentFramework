@@ -420,6 +420,17 @@ class RemoteSSHModule(BaseModule):
         if not config:
             return ToolResult(success=False, error="config is required")
 
+        # Validate mode against allowed values
+        valid_modes = {"merge", "replace", "set"}
+        if mode not in valid_modes:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"Invalid mode '{mode}'. "
+                    f"Must be one of: {', '.join(sorted(valid_modes))}"
+                ),
+            )
+
         timeout = self._resolve_timeout(params)
         hostname_str = str(hostname)
 
@@ -491,13 +502,16 @@ class RemoteSSHModule(BaseModule):
         Note: This is a simplified implementation. Real network device
         configuration would use vendor-specific commands or NETCONF.
         """
+        # SECURITY: Use shlex.quote to prevent shell injection via config
+        quoted_config = shlex.quote(config)
+
         # For dry_run, we echo the config without applying
         if dry_run:
-            return f"echo 'DRY RUN - would apply config ({mode}):' && echo '{config}'"
+            return f"echo 'DRY RUN - would apply config' && echo {quoted_config}"
 
         # Generic implementation - echo the config
         # In production, this would be device-specific (Juniper, Cisco, etc.)
-        return f"echo '{config}'"
+        return f"echo {quoted_config}"
 
     async def _get_session(self, hostname: str) -> Any | None:
         """Get an active SSH session for a hostname, or None if not connected."""
