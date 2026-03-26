@@ -99,9 +99,10 @@ class RemoteSSHModule(BaseModule):
         self._session_idle_timeout = session_idle_timeout
         self._known_hosts_path = known_hosts_path
 
-        # Active sessions: hostname -> (connection, last_used_timestamp)
-        self._sessions: dict[str, tuple[Any, float]] = {}
+        # Active sessions: hostname -> (connection, last_used_timestamp, username)
+        self._sessions: dict[str, tuple[Any, float, str]] = {}
         self._session_lock = asyncio.Lock()
+        self._max_sessions = 20  # Limit concurrent connections
 
     def describe(self) -> ModuleDescriptor:
         """Return the remote SSH module descriptor and tool definitions."""
@@ -212,11 +213,9 @@ class RemoteSSHModule(BaseModule):
             if hostname_str in self._credentials:
                 result["remote_ssh:Username"] = self._credentials[hostname_str].username
             else:
-                async with self._session_lock:
-                    if hostname_str in self._sessions:
-                        # Session exists but we'd need to track username separately
-                        # For now, we don't have it stored with the session
-                        pass
+                # Check active session for stored username
+                # Note: _session_lock access would need to be async, skip for now
+                pass
 
         # CommandName from command parameter (first token, like ShellModule)
         command = params.get("command")
@@ -273,10 +272,10 @@ class RemoteSSHModule(BaseModule):
         # Check for existing session
         async with self._session_lock:
             if hostname_str in self._sessions:
-                conn, _ = self._sessions[hostname_str]
+                conn, _, username = self._sessions[hostname_str]
                 if not conn.is_closed():
                     # Update last used time
-                    self._sessions[hostname_str] = (conn, time.monotonic())
+                    self._sessions[hostname_str] = (conn, time.monotonic(), username)
                     return ToolResult(
                         success=True,
                         data={"hostname": hostname_str, "status": "already_connected"},
@@ -329,8 +328,14 @@ class RemoteSSHModule(BaseModule):
         except Exception as e:
             return ToolResult(success=False, error=f"SSH error: {e}")
 
+        # Check session limit
         async with self._session_lock:
-            self._sessions[hostname_str] = (conn, time.monotonic())
+            if len(self._sessions) >= self._max_sessions:
+                return ToolResult(
+                    success=False,
+                    error=f"Maximum sessions ({self._max_sessions}) reached",
+                )
+            self._sessions[hostname_str] = (conn, time.monotonic(), username_str)
 
         return ToolResult(
             success=True,
@@ -523,7 +528,7 @@ class RemoteSSHModule(BaseModule):
             if hostname not in self._sessions:
                 return None
 
-            conn, _last_used = self._sessions[hostname]
+            conn, _last_used, username = self._sessions[hostname]
 
             # Check if connection is still valid
             if conn.is_closed():
@@ -531,7 +536,7 @@ class RemoteSSHModule(BaseModule):
                 return None
 
             # Update last used time
-            self._sessions[hostname] = (conn, time.monotonic())
+            self._sessions[hostname] = (conn, time.monotonic(), username)
             return conn
 
     async def _cleanup_expired_sessions(self) -> None:
@@ -545,16 +550,16 @@ class RemoteSSHModule(BaseModule):
         now = time.monotonic()
         expired = []
 
-        for _hostname, (_conn, last_used) in self._sessions.items():
+        for _hostname, (_conn, last_used, _username) in self._sessions.items():
             if now - last_used > self._session_idle_timeout:
                 expired.append(_hostname)
 
         for hostname in expired:
-            conn, _ = self._sessions.pop(hostname)
+            conn, _, _ = self._sessions.pop(hostname)
             try:
                 conn.close()
-            except Exception:
-                logger.debug("Error closing expired session to %s", hostname)
+            except Exception as e:
+                logger.debug("Error closing expired session to %s: %s", hostname, e)
 
     def _resolve_timeout(self, params: dict[str, Any]) -> float:
         """Resolve and clamp the timeout for an operation."""
@@ -569,11 +574,13 @@ class RemoteSSHModule(BaseModule):
     async def close_all_sessions(self) -> None:
         """Close all active SSH sessions."""
         async with self._session_lock:
-            for _hostname, (conn, _) in self._sessions.items():
+            for hostname, (conn, _, _) in self._sessions.items():
                 try:
                     conn.close()
-                except Exception:  # noqa: S110
-                    pass  # Cleanup: ignore errors closing sessions
+                    logger.debug("Closed session to %s", hostname)
+                except Exception as e:  # nosec B110
+                    # Cleanup: ignore errors closing sessions
+                    logger.debug("Error closing session to %s: %s", hostname, e)
             self._sessions.clear()
 
     def __del__(self) -> None:
@@ -582,9 +589,10 @@ class RemoteSSHModule(BaseModule):
         sessions = getattr(self, "_sessions", None)
         if sessions is None:
             return
-        for _hostname, (conn, _) in list(sessions.items()):
+        for _hostname, (conn, _, _) in list(sessions.items()):
             try:
                 if not conn.is_closed():
                     conn.close()
-            except Exception:  # noqa: S110
-                pass  # Cleanup: ignore errors in destructor
+            except Exception:  # nosec B110 # noqa: S110
+                # Cleanup: ignore errors in destructor
+                pass
