@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.13"
 authors = [
-    {name = "Zach Brooks"},
+    {name = "Zachary Brooks"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
