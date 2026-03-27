@@ -53,13 +53,14 @@ class AuditModule(BaseModule):
 
     def __init__(
         self,
-        audit_log_path: Path,
+        audit_log_path: Path | None = None,
         max_results: int = DEFAULT_MAX_RESULTS,
     ) -> None:
         """Initialize the audit module.
 
         Args:
-            audit_log_path: Path to the JSONL audit log file.
+            audit_log_path: Path to the JSONL audit log file. If None,
+                defaults to "audit.jsonl" in the current working directory.
             max_results: Maximum number of results to return per query.
                 Prevents memory exhaustion from large result sets.
 
@@ -68,7 +69,9 @@ class AuditModule(BaseModule):
         """
         if max_results <= 0:
             raise ValueError("max_results must be positive")
-        self.audit_log_path = audit_log_path.resolve()
+        self.audit_log_path = (
+            audit_log_path if audit_log_path else Path("audit.jsonl")
+        ).resolve()
         self.max_results = max_results
 
     def describe(self) -> ModuleDescriptor:
