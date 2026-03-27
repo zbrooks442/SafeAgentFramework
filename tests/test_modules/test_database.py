@@ -652,13 +652,14 @@ class TestTableNameExtraction:
         backend = MockDatabaseBackend()
         module = DatabaseModule(backend)
 
-        # Subqueries - extracts from outer FROM
+        # Subqueries - the regex finds the last FROM <table> pattern
+        # In this case, it finds "FROM USERS" in the subquery
         table = module._extract_table_name(
             "SELECT * FROM (SELECT id FROM users) AS sub"
         )
-        # Returns 'select' due to naive parsing - this is expected behavior
-        # The extraction is best-effort and documented as limited
-        assert table is not None  # At least something is extracted
+        # The regex finds 'users' from the innermost FROM clause
+        # This is documented as a best-effort limitation
+        assert table == "users"
 
     def test_extract_table_from_cte(self) -> None:
         """Should handle CTEs with best-effort extraction."""
@@ -791,6 +792,74 @@ class TestSecurityGuardrails:
         assert result.success is False
         assert "SELECT statements" in result.error
         backend.query.assert_not_called()
+
+    async def test_execute_statement_rejects_select(self) -> None:
+        """execute_statement should reject SELECT statements."""
+        backend = MockDatabaseBackend()
+        module = DatabaseModule(backend)
+
+        result = await module.execute(
+            "database:execute_statement",
+            {"database": "mydb", "sql": "SELECT * FROM users"},
+        )
+
+        assert result.success is False
+        assert "Use database:query tool for SELECT statements" in result.error
+        backend.execute_statement.assert_not_called()
+
+    async def test_query_allows_select_with_create_in_string(self) -> None:
+        """Query should allow SELECT with DDL keywords inside string literals."""
+        backend = MockDatabaseBackend()
+        backend.query.return_value = {"rows": [], "row_count": 0}
+        module = DatabaseModule(backend)
+
+        # SELECT with 'CREATE' in a string literal should NOT be flagged as DDL
+        result = await module.execute(
+            "database:query",
+            {
+                "database": "mydb",
+                "sql": "SELECT * FROM audit_log WHERE action = 'CREATE'",
+            },
+        )
+
+        assert result.success is True
+        backend.query.assert_called_once()
+
+    async def test_execute_statement_allows_insert_with_create_in_string(self) -> None:
+        """execute_statement should allow INSERT with DDL keywords in strings."""
+        backend = MockDatabaseBackend()
+        backend.execute_statement.return_value = {"rows_affected": 1}
+        module = DatabaseModule(backend)
+
+        # INSERT with 'DROP' in a string literal should NOT be flagged as DDL
+        result = await module.execute(
+            "database:execute_statement",
+            {
+                "database": "mydb",
+                "sql": "INSERT INTO logs (action) VALUES ('DROP TABLE users')",
+            },
+        )
+
+        assert result.success is True
+        backend.execute_statement.assert_called_once()
+
+    async def test_execute_statement_allows_update_with_alter_in_string(self) -> None:
+        """execute_statement should allow UPDATE with DDL keywords in strings."""
+        backend = MockDatabaseBackend()
+        backend.execute_statement.return_value = {"rows_affected": 1}
+        module = DatabaseModule(backend)
+
+        # UPDATE with 'ALTER' in a string literal should NOT be flagged as DDL
+        result = await module.execute(
+            "database:execute_statement",
+            {
+                "database": "mydb",
+                "sql": "UPDATE config SET value = 'ALTER TABLE add_column'",
+            },
+        )
+
+        assert result.success is True
+        backend.execute_statement.assert_called_once()
 
 
 class TestEdgeCases:

@@ -58,14 +58,29 @@ _READONLY_PATTERN = re.compile(
 )
 
 
+def _strip_string_literals(sql: str) -> str:
+    """Remove single and double quoted strings from SQL.
+
+    This prevents false positives when SQL keywords appear inside string literals,
+    e.g., SELECT * FROM audit_log WHERE action = 'CREATE' should not be flagged as DDL.
+    """
+    # Remove single-quoted strings (replace with empty quotes)
+    sql = re.sub(r"'[^']*'", "''", sql)
+    # Remove double-quoted strings (replace with empty quotes)
+    sql = re.sub(r'"[^"]*"', '""', sql)
+    return sql
+
+
 def _is_ddl(sql: str) -> bool:
     """Check if SQL contains DDL statements (CREATE, DROP, ALTER, TRUNCATE)."""
-    return bool(_DDL_PATTERN.search(sql))
+    sql_no_strings = _strip_string_literals(sql)
+    return bool(_DDL_PATTERN.search(sql_no_strings))
 
 
 def _is_readonly(sql: str) -> bool:
     """Check if SQL is a read-only SELECT statement."""
-    return bool(_READONLY_PATTERN.match(sql))
+    sql_no_strings = _strip_string_literals(sql)
+    return bool(_READONLY_PATTERN.match(sql_no_strings))
 
 
 @runtime_checkable
@@ -420,8 +435,7 @@ class DatabaseModule(BaseModule):
             return ToolResult(
                 success=False,
                 error=(
-                    "DDL statements (CREATE, DROP, ALTER, TRUNCATE) "
-                    "are not allowed."
+                    "DDL statements (CREATE, DROP, ALTER, TRUNCATE) are not allowed."
                 ),
             )
 
@@ -461,6 +475,13 @@ class DatabaseModule(BaseModule):
                     "DDL statements (CREATE, DROP, ALTER, TRUNCATE) are not "
                     "allowed via execute_statement."
                 ),
+            )
+
+        # Reject SELECT in execute_statement (use query tool instead)
+        if _is_readonly(sql):
+            return ToolResult(
+                success=False,
+                error="Use database:query tool for SELECT statements.",
             )
 
         # Log write operations: database at INFO, SQL at DEBUG (PII risk mitigation)
