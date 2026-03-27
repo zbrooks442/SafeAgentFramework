@@ -104,7 +104,12 @@ def _is_internal_ip(host: str) -> bool:
     # Check if it's a direct IP address
     try:
         addr = ipaddress.ip_address(host_part)
-        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+        return (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+        )
     except ValueError:
         pass
 
@@ -117,8 +122,13 @@ def _is_internal_ip(host: str) -> bool:
             ip_str = sockaddr[0]
             try:
                 addr = ipaddress.ip_address(ip_str)
-                # Block private, loopback, link-local, and reserved addresses
-                if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+                # Block private, loopback, link-local, reserved addresses
+                if (
+                    addr.is_private
+                    or addr.is_loopback
+                    or addr.is_link_local
+                    or addr.is_reserved
+                ):
                     return True
             except ValueError:
                 continue

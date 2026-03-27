@@ -456,8 +456,8 @@ class TestWebApiModuleExecution:
             {"url": "https://api.example.com/error", "method": "GET"},
         )
 
-        # HTTP responses are returned with success=True; status_code indicates HTTP status
-        # The caller should check status_code for error handling
+        # HTTP responses returned with success=True; status_code indicates HTTP status
+        # Caller should check status_code for error handling
         assert result.success is True
         assert result.data is not None
         assert result.data["status_code"] == 500
@@ -582,7 +582,9 @@ class TestWebApiModuleSecurity:
             {"url": "http://192.168.1.1/admin", "method": "GET"},
         )
         assert result.success is False
-        assert "internal" in result.error.lower() or "not allowed" in result.error.lower()
+        assert (
+            "internal" in result.error.lower() or "not allowed" in result.error.lower()
+        )
 
         # 10.x.x.x - private range
         result = await module.execute(
