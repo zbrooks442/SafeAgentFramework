@@ -62,13 +62,42 @@ def _strip_string_literals(sql: str) -> str:
     """Remove single and double quoted strings from SQL.
 
     This prevents false positives when SQL keywords appear inside string literals,
-    e.g., SELECT * FROM audit_log WHERE action = 'CREATE' should not be flagged as DDL.
+    e.g., ``SELECT * FROM audit_log WHERE action = 'CREATE'`` should not be flagged
+    as DDL.
+
+    Uses a simple state-machine parser to correctly handle:
+    - Standard SQL doubled quotes (e.g. two single-quotes in a row)
+    - MySQL-style backslash escapes (e.g. backslash-quote sequences)
     """
-    # Remove single-quoted strings (replace with empty quotes)
-    sql = re.sub(r"'[^']*'", "''", sql)
-    # Remove double-quoted strings (replace with empty quotes)
-    sql = re.sub(r'"[^"]*"', '""', sql)
-    return sql
+    result: list[str] = []
+    i = 0
+    length = len(sql)
+    while i < length:
+        ch = sql[i]
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            # Consume everything inside the quoted string
+            while i < length:
+                if sql[i] == "\\" and i + 1 < length:
+                    # Backslash escape — skip next character
+                    i += 2
+                elif sql[i] == quote:
+                    if i + 1 < length and sql[i + 1] == quote:
+                        # Doubled quote escape — skip both
+                        i += 2
+                    else:
+                        # Closing quote
+                        i += 1
+                        break
+                else:
+                    i += 1
+            # Replace the entire literal with empty quotes
+            result.append("''" if quote == "'" else '""')
+        else:
+            result.append(ch)
+            i += 1
+    return "".join(result)
 
 
 def _is_ddl(sql: str) -> bool:

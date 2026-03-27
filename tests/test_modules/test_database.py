@@ -861,6 +861,45 @@ class TestSecurityGuardrails:
         assert result.success is True
         backend.execute_statement.assert_called_once()
 
+    async def test_strip_string_literals_handles_backslash_escape_single(
+        self,
+    ) -> None:
+        """Backslash-escaped single quotes should not end the string."""
+        from safe_agent.modules.database import _strip_string_literals
+
+        # 'it\'s a CREATE' — the \' is an escape, string continues
+        result = _strip_string_literals(r"SELECT * WHERE x = 'it\'s a CREATE'")
+        assert "CREATE" not in result
+        assert result == "SELECT * WHERE x = ''"
+
+    async def test_strip_string_literals_handles_backslash_escape_double(
+        self,
+    ) -> None:
+        """Backslash-escaped double quotes should not end the string."""
+        from safe_agent.modules.database import _strip_string_literals
+
+        # "it\"s a DROP" — the \" is an escape, string continues
+        result = _strip_string_literals(r'SELECT * WHERE x = "it\"s a DROP"')
+        assert "DROP" not in result
+        assert result == 'SELECT * WHERE x = ""'
+
+    async def test_query_allows_backslash_escaped_create_in_string(self) -> None:
+        """Query with backslash-escaped string containing CREATE should pass."""
+        backend = MockDatabaseBackend()
+        backend.query.return_value = {"rows": [], "row_count": 0}
+        module = DatabaseModule(backend)
+
+        result = await module.execute(
+            "database:query",
+            {
+                "database": "mydb",
+                "sql": r"SELECT * FROM logs WHERE msg = 'it\'s a CREATE TABLE'",
+            },
+        )
+
+        assert result.success is True
+        backend.query.assert_called_once()
+
 
 class TestEdgeCases:
     """Tests for edge cases and parameter handling."""
