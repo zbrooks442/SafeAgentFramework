@@ -986,11 +986,18 @@ class GitModule(BaseModule):
         # Security: validate tag name doesn't start with '-'
         _validate_not_flag(str(name), "tag name")
 
-        args = ["tag", "--", str(name)]
+        args = ["tag"]
 
+        # Add flags BEFORE --
         message = params.get("message")
         if message:
             args.extend(["-a", "-m", str(message)])
+
+        # Add -- separator
+        args.append("--")
+
+        # Add positional args AFTER --
+        args.append(str(name))
 
         commit = params.get("commit")
         if commit:
