@@ -744,11 +744,15 @@ class GitModule(BaseModule):
         # Security: validate branch name doesn't start with '-'
         _validate_not_flag(str(name), "branch name")
 
-        args = ["branch", "--", str(name)]
+        args = ["branch"]
 
+        # Build flags BEFORE -- separator
         force = params.get("force", False)
         if force:
             args.append("--force")
+
+        # Add -- separator, then branch name
+        args.extend(["--", str(name)])
 
         result = await self._run_git(args)
 
@@ -811,8 +815,9 @@ class GitModule(BaseModule):
         # Security: validate branch doesn't start with '-'
         _validate_not_flag(str(branch), "branch")
 
-        args = ["merge", "--", str(branch)]
+        args = ["merge"]
 
+        # Build flags BEFORE -- separator
         no_ff = params.get("no_ff", False)
         if no_ff:
             args.append("--no-ff")
@@ -820,6 +825,9 @@ class GitModule(BaseModule):
         message = params.get("message")
         if message:
             args.extend(["-m", str(message)])
+
+        # Add -- separator, then branch name
+        args.extend(["--", str(branch)])
 
         result = await self._run_git(args)
 
