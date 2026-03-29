@@ -24,7 +24,7 @@ import asyncio
 import logging
 import random
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
@@ -302,7 +302,7 @@ async def _backoff_with_delay(
     attempt: int, base_delay: float, max_delay: float
 ) -> None:
     """Calculate and sleep for exponential backoff with jitter."""
-    delay = min(base_delay * (2**attempt), max_delay) * (0.5 + random.random() * 0.5)  # noqa: S311
+    delay = min(base_delay * (2**attempt), max_delay) * (0.5 + random.random() * 0.5)  # noqa: S311  # nosec B311
     await asyncio.sleep(delay)
 
 
@@ -440,6 +440,18 @@ class GitHubSCM(SCMProvider):
             message="Unknown error after retries", provider=self.name
         )
 
+    async def _request_dict(
+        self, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Make an HTTP request expecting a JSON object response."""
+        return cast(dict[str, Any], await self._request(method, path, **kwargs))
+
+    async def _request_list(
+        self, method: str, path: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        """Make an HTTP request expecting a JSON array response."""
+        return cast(list[dict[str, Any]], await self._request(method, path, **kwargs))
+
     def _parse_user(self, data: dict[str, Any]) -> User:
         """Parse GitHub user data."""
         return User(
@@ -566,24 +578,24 @@ class GitHubSCM(SCMProvider):
         """List repositories for an owner."""
         params: dict[str, Any] = {"per_page": 100}
         params.update(filters)
-        data = await self._request("GET", f"/users/{owner}/repos", params=params)
+        data = await self._request_list("GET", f"/users/{owner}/repos", params=params)
         return [self._parse_repository(repo) for repo in data]
 
     async def get_repo(self, owner: str, name: str) -> Repository:
         """Get a specific repository."""
-        data = await self._request("GET", f"/repos/{owner}/{name}")
+        data = await self._request_dict("GET", f"/repos/{owner}/{name}")
         return self._parse_repository(data)
 
     async def create_repo(self, name: str, **opts: Any) -> Repository:
         """Create a new repository."""
         body: dict[str, Any] = {"name": name}
         body.update(opts)
-        data = await self._request("POST", "/user/repos", json=body)
+        data = await self._request_dict("POST", "/user/repos", json=body)
         return self._parse_repository(data)
 
     async def create_fork(self, owner: str, repo: str, **opts: Any) -> Repository:
         """Fork a repository."""
-        data = await self._request(
+        data = await self._request_dict(
             "POST",
             f"/repos/{owner}/{repo}/forks",
             json=opts if opts else None,
@@ -596,14 +608,16 @@ class GitHubSCM(SCMProvider):
         """List branches in a repository."""
         params: dict[str, Any] = {"per_page": 100}
         params.update(filters)
-        data = await self._request(
+        data = await self._request_list(
             "GET", f"/repos/{owner}/{repo}/branches", params=params
         )
         return [self._parse_branch(branch) for branch in data]
 
     async def get_branch(self, owner: str, repo: str, branch: str) -> Branch:
         """Get a specific branch."""
-        data = await self._request("GET", f"/repos/{owner}/{repo}/branches/{branch}")
+        data = await self._request_dict(
+            "GET", f"/repos/{owner}/{repo}/branches/{branch}"
+        )
         return self._parse_branch(data)
 
     async def create_pull_request(
@@ -612,12 +626,14 @@ class GitHubSCM(SCMProvider):
         """Create a pull request."""
         body: dict[str, Any] = {"title": title, "head": head, "base": base}
         body.update(opts)
-        data = await self._request("POST", f"/repos/{owner}/{repo}/pulls", json=body)
+        data = await self._request_dict(
+            "POST", f"/repos/{owner}/{repo}/pulls", json=body
+        )
         return self._parse_pull_request(data)
 
     async def get_pull_request(self, owner: str, repo: str, number: int) -> PullRequest:
         """Get a specific pull request."""
-        data = await self._request("GET", f"/repos/{owner}/{repo}/pulls/{number}")
+        data = await self._request_dict("GET", f"/repos/{owner}/{repo}/pulls/{number}")
         return self._parse_pull_request(data)
 
     async def list_pull_requests(
@@ -626,7 +642,9 @@ class GitHubSCM(SCMProvider):
         """List pull requests in a repository."""
         params: dict[str, Any] = {"per_page": 100}
         params.update(filters)
-        data = await self._request("GET", f"/repos/{owner}/{repo}/pulls", params=params)
+        data = await self._request_list(
+            "GET", f"/repos/{owner}/{repo}/pulls", params=params
+        )
         return [self._parse_pull_request(pr) for pr in data]
 
     async def approve_pull_request(
@@ -635,7 +653,7 @@ class GitHubSCM(SCMProvider):
         """Approve a pull request."""
         body: dict[str, Any] = {"event": "APPROVE"}
         body.update(opts)
-        await self._request(
+        await self._request_dict(
             "POST", f"/repos/{owner}/{repo}/pulls/{number}/reviews", json=body
         )
         return await self.get_pull_request(owner, repo, number)
@@ -644,7 +662,7 @@ class GitHubSCM(SCMProvider):
         self, owner: str, repo: str, number: int, body: str
     ) -> Comment:
         """Add a comment to a pull request."""
-        data = await self._request(
+        data = await self._request_dict(
             "POST",
             f"/repos/{owner}/{repo}/issues/{number}/comments",
             json={"body": body},
@@ -657,14 +675,16 @@ class GitHubSCM(SCMProvider):
         """Create an issue."""
         body: dict[str, Any] = {"title": title}
         body.update(opts)
-        data = await self._request("POST", f"/repos/{owner}/{repo}/issues", json=body)
+        data = await self._request_dict(
+            "POST", f"/repos/{owner}/{repo}/issues", json=body
+        )
         return self._parse_issue(data)
 
     async def list_issues(self, owner: str, repo: str, **filters: Any) -> list[Issue]:
         """List issues in a repository."""
         params: dict[str, Any] = {"per_page": 100}
         params.update(filters)
-        data = await self._request(
+        data = await self._request_list(
             "GET", f"/repos/{owner}/{repo}/issues", params=params
         )
         return [self._parse_issue(issue) for issue in data]
@@ -678,12 +698,14 @@ class GitHubSCM(SCMProvider):
             config["secret"] = opts.pop("secret")
         body: dict[str, Any] = {"config": config, "events": events}
         body.update(opts)
-        data = await self._request("POST", f"/repos/{owner}/{repo}/hooks", json=body)
+        data = await self._request_dict(
+            "POST", f"/repos/{owner}/{repo}/hooks", json=body
+        )
         return self._parse_webhook(data)
 
     async def list_webhooks(self, owner: str, repo: str) -> list[Webhook]:
         """List webhooks for a repository."""
-        data = await self._request("GET", f"/repos/{owner}/{repo}/hooks")
+        data = await self._request_list("GET", f"/repos/{owner}/{repo}/hooks")
         return [self._parse_webhook(hook) for hook in data]
 
 
@@ -818,6 +840,18 @@ class GitLabSCM(SCMProvider):
         raise last_error or SCMError(
             message="Unknown error after retries", provider=self.name
         )
+
+    async def _request_dict(
+        self, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Make an HTTP request expecting a JSON object response."""
+        return cast(dict[str, Any], await self._request(method, path, **kwargs))
+
+    async def _request_list(
+        self, method: str, path: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        """Make an HTTP request expecting a JSON array response."""
+        return cast(list[dict[str, Any]], await self._request(method, path, **kwargs))
 
     @staticmethod
     def _encode_path(path: str) -> str:
@@ -974,7 +1008,7 @@ class GitLabSCM(SCMProvider):
         """List repositories for an owner."""
         params: dict[str, Any] = {"per_page": 100}
         params.update(filters)
-        data = await self._request(
+        data = await self._request_list(
             "GET", f"/groups/{self._encode_path(owner)}/projects", params=params
         )
         return [self._parse_repository(repo) for repo in data]
@@ -982,14 +1016,14 @@ class GitLabSCM(SCMProvider):
     async def get_repo(self, owner: str, name: str) -> Repository:
         """Get a specific repository."""
         path = self._encode_path(f"{owner}/{name}")
-        data = await self._request("GET", f"/projects/{path}")
+        data = await self._request_dict("GET", f"/projects/{path}")
         return self._parse_repository(data)
 
     async def create_repo(self, name: str, **opts: Any) -> Repository:
         """Create a new repository."""
         body: dict[str, Any] = {"name": name}
         body.update(opts)
-        data = await self._request("POST", "/projects", json=body)
+        data = await self._request_dict("POST", "/projects", json=body)
         return self._parse_repository(data)
 
     async def create_fork(self, owner: str, repo: str, **opts: Any) -> Repository:
@@ -998,7 +1032,7 @@ class GitLabSCM(SCMProvider):
         body: dict[str, Any] = {}
         if "namespace" in opts:
             body["namespace_path"] = opts["namespace"]
-        data = await self._request(
+        data = await self._request_dict(
             "POST", f"/projects/{path}/fork", json=body if body else None
         )
         return self._parse_repository(data)
@@ -1010,7 +1044,7 @@ class GitLabSCM(SCMProvider):
         path = self._encode_path(f"{owner}/{repo}")
         params: dict[str, Any] = {"per_page": 100}
         params.update(filters)
-        data = await self._request(
+        data = await self._request_list(
             "GET", f"/projects/{path}/repository/branches", params=params
         )
         return [self._parse_branch(branch) for branch in data]
@@ -1018,7 +1052,7 @@ class GitLabSCM(SCMProvider):
     async def get_branch(self, owner: str, repo: str, branch: str) -> Branch:
         """Get a specific branch."""
         path = self._encode_path(f"{owner}/{repo}")
-        data = await self._request(
+        data = await self._request_dict(
             "GET",
             f"/projects/{path}/repository/branches/{self._encode_path(branch)}",
         )
@@ -1035,7 +1069,7 @@ class GitLabSCM(SCMProvider):
             "target_branch": base,
         }
         body.update(opts)
-        data = await self._request(
+        data = await self._request_dict(
             "POST", f"/projects/{path}/merge_requests", json=body
         )
         return self._parse_pull_request(data)
@@ -1043,7 +1077,9 @@ class GitLabSCM(SCMProvider):
     async def get_pull_request(self, owner: str, repo: str, number: int) -> PullRequest:
         """Get a specific pull request."""
         path = self._encode_path(f"{owner}/{repo}")
-        data = await self._request("GET", f"/projects/{path}/merge_requests/{number}")
+        data = await self._request_dict(
+            "GET", f"/projects/{path}/merge_requests/{number}"
+        )
         return self._parse_pull_request(data)
 
     async def list_pull_requests(
@@ -1053,7 +1089,7 @@ class GitLabSCM(SCMProvider):
         path = self._encode_path(f"{owner}/{repo}")
         params: dict[str, Any] = {"per_page": 100}
         params.update(filters)
-        data = await self._request(
+        data = await self._request_list(
             "GET", f"/projects/{path}/merge_requests", params=params
         )
         return [self._parse_pull_request(pr) for pr in data]
@@ -1066,7 +1102,7 @@ class GitLabSCM(SCMProvider):
         body: dict[str, Any] = {}
         if opts.get("body"):
             body["note"] = opts["body"]
-        await self._request(
+        await self._request_dict(
             "POST",
             f"/projects/{path}/merge_requests/{number}/approve",
             json=body if body else None,
@@ -1078,7 +1114,7 @@ class GitLabSCM(SCMProvider):
     ) -> Comment:
         """Add a comment to a pull request."""
         path = self._encode_path(f"{owner}/{repo}")
-        data = await self._request(
+        data = await self._request_dict(
             "POST",
             f"/projects/{path}/merge_requests/{number}/notes",
             json={"body": body},
@@ -1092,7 +1128,7 @@ class GitLabSCM(SCMProvider):
         path = self._encode_path(f"{owner}/{repo}")
         body: dict[str, Any] = {"title": title}
         body.update(opts)
-        data = await self._request("POST", f"/projects/{path}/issues", json=body)
+        data = await self._request_dict("POST", f"/projects/{path}/issues", json=body)
         return self._parse_issue(data)
 
     async def list_issues(self, owner: str, repo: str, **filters: Any) -> list[Issue]:
@@ -1100,7 +1136,9 @@ class GitLabSCM(SCMProvider):
         path = self._encode_path(f"{owner}/{repo}")
         params: dict[str, Any] = {"per_page": 100}
         params.update(filters)
-        data = await self._request("GET", f"/projects/{path}/issues", params=params)
+        data = await self._request_list(
+            "GET", f"/projects/{path}/issues", params=params
+        )
         return [self._parse_issue(issue) for issue in data]
 
     async def create_webhook(
@@ -1123,13 +1161,13 @@ class GitLabSCM(SCMProvider):
         if "secret" in opts:
             body["token"] = opts.pop("secret")
         body["active"] = opts.get("active", True)
-        data = await self._request("POST", f"/projects/{path}/hooks", json=body)
+        data = await self._request_dict("POST", f"/projects/{path}/hooks", json=body)
         return self._parse_webhook(data)
 
     async def list_webhooks(self, owner: str, repo: str) -> list[Webhook]:
         """List webhooks for a repository."""
         path = self._encode_path(f"{owner}/{repo}")
-        data = await self._request("GET", f"/projects/{path}/hooks")
+        data = await self._request_list("GET", f"/projects/{path}/hooks")
         return [self._parse_webhook(hook) for hook in data]
 
 
