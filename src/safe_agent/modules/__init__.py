@@ -53,7 +53,8 @@ from safe_agent.modules.scm import (
     User,
     Webhook,
 )
-from safe_agent.modules.vault import VaultBackend, VaultModule
+from safe_agent.modules.security.remote_ssh import RemoteSSHModule, SSHCredential
+from safe_agent.modules.security.vault import VaultBackend, VaultModule
 
 __all__ = [
     "AlertingBackend",
@@ -82,11 +83,13 @@ __all__ = [
     "ModuleRegistry",
     "PullRequest",
     "RateLimitError",
+    "RemoteSSHModule",
     "Repository",
     "SCMError",
     "SCMModule",
     "SCMProvider",
     "SCMRegistry",
+    "SSHCredential",
     "ToolDescriptor",
     "ToolResult",
     "User",

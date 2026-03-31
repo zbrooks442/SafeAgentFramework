@@ -22,7 +22,7 @@ from unittest import mock
 
 import pytest
 
-from safe_agent.modules.remote_ssh import RemoteSSHModule, SSHCredential
+from safe_agent.modules.security.remote_ssh import RemoteSSHModule, SSHCredential
 
 
 class MockSSHConnection:

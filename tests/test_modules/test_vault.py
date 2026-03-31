@@ -17,7 +17,7 @@
 import logging
 from typing import Any
 
-from safe_agent.modules.vault import VaultBackend, VaultModule
+from safe_agent.modules.security.vault import VaultBackend, VaultModule
 
 
 class MockVaultBackend:
