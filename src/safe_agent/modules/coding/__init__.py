@@ -55,5 +55,7 @@ __all__ = [
     "Webhook",
 ]
 
-# Import ShellModule after defining __all__ to avoid circular import issues
+# Import ShellModule at the end to avoid circular import issues.
+# ShellModule depends on modules that may import from this package during
+# their initialization, so we defer the import until after __all__ is defined.
 from safe_agent.modules.coding.shell import ShellModule
