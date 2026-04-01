@@ -31,6 +31,7 @@ Security Considerations:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Protocol, runtime_checkable
 
 from safe_agent.modules.base import (
@@ -535,8 +536,6 @@ class AlertingModule(BaseModule):
         Returns:
             The duration in minutes, or None if parsing fails.
         """
-        import re
-
         duration = duration.strip().lower()
         if not duration:
             return None

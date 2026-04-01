@@ -1371,9 +1371,7 @@ class TestGitModuleRunGit:
 
     async def test_run_git_timeout(self, tmp_path: Path) -> None:
         """_run_git should timeout long-running commands."""
-        # Use the current repo directory which is a git repository
-        repo_path = Path("/home/node/.openclaw/workspace/SafeAgentFramework")
-        module = GitModule(working_directory=repo_path, default_timeout=0.01)
+        module = GitModule(working_directory=tmp_path, default_timeout=0.01)
 
         # Use a slow operation that will definitely timeout
         result = await module._run_git(

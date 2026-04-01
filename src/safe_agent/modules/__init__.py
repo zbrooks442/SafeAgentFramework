@@ -47,6 +47,7 @@ from safe_agent.modules.communication import (
     MessagingModule,
 )
 from safe_agent.modules.filesystem.database import DatabaseBackend, DatabaseModule
+from safe_agent.modules.filesystem.filesystem import FilesystemModule
 from safe_agent.modules.observability import (
     AlertingBackend,
     AlertingModule,
@@ -95,6 +96,7 @@ __all__ = [
     "EmailModule",
     "ErrorTrackingBackend",
     "ErrorTrackingModule",
+    "FilesystemModule",
     "GitHubSCM",
     "GitLabSCM",
     "GitModule",

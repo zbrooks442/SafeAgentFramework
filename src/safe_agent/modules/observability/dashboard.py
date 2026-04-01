@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from safe_agent.modules.base import (
     BaseModule,
@@ -33,6 +33,7 @@ from safe_agent.modules.base import (
 logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
 class DashboardBackend(Protocol):
     """Protocol for dashboard backend implementations.
 
@@ -166,7 +167,7 @@ class DashboardModule(BaseModule):
         self,
         tool_name: str,
         params: dict[str, Any],
-    ) -> ToolResult:
+    ) -> ToolResult[Any]:
         """Execute a dashboard tool invocation."""
         try:
             normalized_tool = tool_name.removeprefix("dashboard:")
@@ -179,7 +180,7 @@ class DashboardModule(BaseModule):
             logger.exception("Dashboard tool execution failed: %s", tool_name)
             return ToolResult(success=False, error=str(exc))
 
-    async def _get_panel(self, params: dict[str, Any]) -> ToolResult:
+    async def _get_panel(self, params: dict[str, Any]) -> ToolResult[Any]:
         """Delegate to backend to retrieve a panel."""
         dashboard_id = str(params["dashboard_id"])
         panel_id = str(params["panel_id"])
@@ -195,7 +196,7 @@ class DashboardModule(BaseModule):
         result = await self._backend.get_panel(dashboard_id, panel_id, **kwargs)
         return ToolResult(success=True, data=result)
 
-    async def _list_dashboards(self, params: dict[str, Any]) -> ToolResult:
+    async def _list_dashboards(self, params: dict[str, Any]) -> ToolResult[Any]:
         """Delegate to backend to list dashboards."""
         filter_val = params.get("filter")
         tags = params.get("tags")

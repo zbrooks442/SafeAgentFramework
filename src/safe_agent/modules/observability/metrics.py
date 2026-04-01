@@ -14,10 +14,10 @@
 
 """Pluggable metrics module for SafeAgent.
 
-This module provides a stable IAM interface for querying metrics backends
-(Prometheus, Datadog, etc.) via the pluggable adapter pattern. The framework
-defines the namespace, tool descriptors, and condition keys; a backend plugin
-provides the concrete implementation.
+This module provides a stable access-policy interface for querying metrics
+backends (Prometheus, Datadog, etc.) via the pluggable adapter pattern. The
+framework defines the namespace, tool descriptors, and condition keys; a
+backend plugin provides the concrete implementation.
 """
 
 from __future__ import annotations
@@ -37,8 +37,6 @@ from safe_agent.modules.base import (
 # is in the parent modules/ directory.
 
 logger = logging.getLogger(__name__)
-
-__all__ = ["MetricsBackend", "MetricsModule"]
 
 
 @runtime_checkable
@@ -78,7 +76,7 @@ class MetricsBackend(Protocol):
 class MetricsModule(BaseModule):
     """Framework-defined metrics interface with pluggable backend adapter.
 
-    This module provides a stable IAM surface for metrics operations. Policies
+    This module provides a stable policy surface for metrics operations. Policies
     are written against the metrics: namespace regardless of which backend
     (Prometheus, Datadog, etc.) is configured. The backend is injected at
     construction time.

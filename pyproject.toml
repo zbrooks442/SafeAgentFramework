@@ -46,13 +46,31 @@ dev = [
 ]
 
 [project.entry-points."safe_agent.modules"]
-filesystem = "safe_agent.modules.filesystem.filesystem:FilesystemModule"
+# coding
+git = "safe_agent.modules.coding.git:GitModule"
+scm = "safe_agent.modules.coding.scm:SCMModule"
 shell = "safe_agent.modules.coding.shell:ShellModule"
+# communication
+calendar = "safe_agent.modules.communication.calendar:CalendarModule"
+email = "safe_agent.modules.communication.email:EmailModule"
+messaging = "safe_agent.modules.communication.messaging:MessagingModule"
+# filesystem
+database = "safe_agent.modules.filesystem.database:DatabaseModule"
+filesystem = "safe_agent.modules.filesystem.filesystem:FilesystemModule"
+# observability
+alerting = "safe_agent.modules.observability.alerting:AlertingModule"
+audit = "safe_agent.modules.observability.audit:AuditModule"
+dashboard = "safe_agent.modules.observability.dashboard:DashboardModule"
+error_tracking = "safe_agent.modules.observability.error_tracking:ErrorTrackingModule"
+logging = "safe_agent.modules.observability.logging:LoggingModule"
+metrics = "safe_agent.modules.observability.metrics:MetricsModule"
+# security
+remote_ssh = "safe_agent.modules.security.remote_ssh:RemoteSSHModule"
+vault = "safe_agent.modules.security.vault:VaultModule"
+# web
 web_api = "safe_agent.modules.web.api:WebApiModule"
 web_browse = "safe_agent.modules.web.browse:WebBrowseModule"
-remote_ssh = "safe_agent.modules.security.remote_ssh:RemoteSSHModule"
-audit = "safe_agent.modules.observability.audit:AuditModule"
-scm = "safe_agent.modules.coding.scm:SCMModule"
+web_search = "safe_agent.modules.web.search:WebSearchModule"
 
 [project.urls]
 Repository = "https://github.com/zbrooks442/SafeAgentFramework"

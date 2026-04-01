@@ -16,7 +16,7 @@
 
 This module provides a logging interface that delegates to pluggable backends
 (syslog, Splunk, Elasticsearch, Loki, etc.). The framework defines the interface
-and IAM surface; the backend provides the concrete implementation.
+and policy surface; the backend provides the concrete implementation.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ class LoggingBackend(Protocol):
 class LoggingModule(BaseModule):
     """Framework-defined logging interface with pluggable backend.
 
-    This module provides a stable IAM surface for logging operations.
+    This module provides a stable policy surface for logging operations.
     The backend is injected at construction and handles actual execution.
     """
 
