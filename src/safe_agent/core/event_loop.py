@@ -179,6 +179,9 @@ class EventLoop:
                     session.messages.append(
                         {"role": "assistant", "content": response.content}
                     )
+                    # Trim messages to max_messages limit before returning
+                    if len(session.messages) > session.max_messages:
+                        session.messages = session.messages[-session.max_messages:]
                     return response.content
 
                 turn_count += 1
@@ -190,4 +193,8 @@ class EventLoop:
                     session.messages.append(
                         {"role": "assistant", "content": final_text}
                     )
+                    # Trim messages to max_messages limit after turn processing
+                    if len(session.messages) > session.max_messages:
+                        session.messages = session.messages[-session.max_messages:]
                     return final_text
+
