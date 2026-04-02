@@ -40,7 +40,7 @@ class Session(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     messages: list[dict] = Field(default_factory=list)
-    max_messages: int = Field(default=1000)
+    max_messages: int = Field(default=1000, gt=0)
     metadata: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_accessed: datetime = Field(default_factory=lambda: datetime.now(UTC))
