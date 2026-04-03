@@ -232,13 +232,12 @@ class EventLoop:
                             session.messages.append(
                                 {"role": "assistant", "content": response.content}
                             )
+                        tool_calls_list = [tc.model_dump() for tc in restored_calls]
                         session.messages.append(
                             {
                                 "role": "assistant",
                                 "content": None,
-                                "tool_calls": [
-                                    tool_call.model_dump() for tool_call in restored_calls
-                                ],
+                                "tool_calls": tool_calls_list,
                             }
                         )
                     tool_msgs: list[dict] = []

@@ -255,9 +255,7 @@ class TestMaxMessages:
     def test_add_message_returns_none_for_unknown_session(self) -> None:
         manager = SessionManager()
 
-        result = manager.add_message(
-            "nonexistent", {"role": "user", "content": "test"}
-        )
+        result = manager.add_message("nonexistent", {"role": "user", "content": "test"})
 
         assert result is None
 
@@ -418,15 +416,12 @@ class TestThreadSafety:
         manager = SessionManager(max_messages=10_000)
         session = manager.create()
         errors: list[Exception] = []
-        stop_event = threading.Event()
 
         def thread_add_messages() -> None:
             """Simulate a background thread calling add_message."""
             try:
                 for i in range(500):
-                    manager.add_message(
-                        session.id, {"role": "tool", "content": str(i)}
-                    )
+                    manager.add_message(session.id, {"role": "tool", "content": str(i)})
             except Exception as e:
                 errors.append(e)
 
@@ -443,9 +438,9 @@ class TestThreadSafety:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=thread_add_messages) for _ in range(4)
-        ] + [threading.Thread(target=run_event_loop_sim)]
+        threads = [threading.Thread(target=thread_add_messages) for _ in range(4)] + [
+            threading.Thread(target=run_event_loop_sim)
+        ]
 
         for t in threads:
             t.start()
