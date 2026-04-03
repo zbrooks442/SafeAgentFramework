@@ -21,9 +21,10 @@ import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class Session(BaseModel):
@@ -36,7 +37,17 @@ class Session(BaseModel):
         metadata: Arbitrary session-scoped metadata.
         created_at: Timestamp when the session was created.
         last_accessed: Timestamp when the session was last accessed.
+
+    Thread safety
+    -------------
+    All mutations of ``messages`` should be guarded by ``_message_lock``, a
+    per-session ``threading.RLock``.  Both :class:`SessionManager` (via
+    :meth:`~SessionManager.add_message`) and :class:`EventLoop` (via
+    :meth:`~EventLoop.process_turn`) acquire this lock before reading or
+    writing ``messages``, ensuring correct cross-thread behaviour.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     messages: list[dict] = Field(default_factory=list)
@@ -44,6 +55,10 @@ class Session(BaseModel):
     metadata: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_accessed: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    #: Per-session reentrant lock protecting ``messages``.
+    #: Excluded from serialisation; created fresh for each Session instance.
+    _message_lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
 
 
 class SessionManager:
@@ -178,9 +193,19 @@ class SessionManager:
             return list(self._sessions.keys())
 
     def add_message(
-        self, session_id: str, message: dict, *, trim: bool = True
+        self,
+        session_id: str,
+        message: dict[str, Any],
+        *,
+        trim: bool = True,
     ) -> Session | None:
         """Add a message to a session with optional trimming.
+
+        This method is **thread-safe**: it may be called from any OS thread
+        concurrently with :meth:`EventLoop.process_turn`.  The session-level
+        ``threading.RLock`` (``Session._message_lock``) ensures that message
+        mutations are serialised with respect to the event-loop thread as well
+        as other threads calling this method.
 
         Args:
             session_id: The unique identifier of the session.
@@ -191,10 +216,17 @@ class SessionManager:
             The Session instance if found, None otherwise.
         """
         with self._lock:
-            session = self.get(session_id)
+            session = self._sessions.get(session_id)
             if session is None:
                 return None
+            # Update access time and LRU position while holding the manager lock.
+            session.last_accessed = datetime.now(UTC)
+            self._sessions.move_to_end(session_id)
 
+        # Protect the actual message mutation with the per-session lock so that
+        # concurrent EventLoop turns (which also acquire session._message_lock)
+        # cannot interleave with this write.
+        with session._message_lock:
             session.messages.append(message)
 
             if trim and len(session.messages) > session.max_messages:
@@ -202,7 +234,7 @@ class SessionManager:
                 excess = len(session.messages) - session.max_messages
                 del session.messages[:excess]
 
-            return session
+        return session
 
     def count(self) -> int:
         """Return the current number of active sessions.
